@@ -1,0 +1,98 @@
+# ==============================================================================
+# rlhf — requirements
+# ==============================================================================
+#
+# Setup (repo root se):
+#     python3 -m venv .venv
+#     source .venv/bin/activate          # Windows: .venv\Scripts\activate
+#     pip install --upgrade pip
+#     pip install -r rlhf/requirements.txt
+#
+# Verify:
+#     python -c "import torch; print(torch.__version__, torch.backends.mps.is_available())"
+#     python rlhf/rough_work/step_1.py
+#
+# ------------------------------------------------------------------------------
+# NOTE (Apple Silicon / MPS): plain `pip install torch` deta hai MPS-enabled
+# build. Koi special index-url ki zarurat nahi. CUDA machine pe agar default
+# wheel se GPU na mile, toh:
+#     pip install torch --index-url https://download.pytorch.org/whl/cu124
+# ------------------------------------------------------------------------------
+
+
+# ── CORE — inke bina kuch nahi chalega ───────────────────────────────────────
+
+torch>=2.3.0
+# 2.3+ isliye: MPS stability, aur torch.amp.GradScaler(device=...) ka naya API
+# jo plan §5.4 mein use hoga.
+
+transformers>=4.44.0
+# Backbones + tokenizers (plan §4.1 — "koi bhi HF model").
+#
+# *** DHYAN DE — STEP 7 mein yeh bite karega ***
+# transformers v5 ne `torch_dtype=` ko rename karke `dtype=` kar diya hai.
+# Tera purana RL/ code `torch_dtype=` use karta hai — v5 pe woh warn/fail karega.
+# Backbone likhte waqt version check kar lena:
+#     import transformers; print(transformers.__version__)
+
+tokenizers>=0.19.0
+numpy>=1.26.0
+
+
+# ── DATA ─────────────────────────────────────────────────────────────────────
+
+pyyaml>=6.0
+# Config files (plan §9.1). json/jsonl stdlib se ho jayenge.
+
+datasets>=2.20.0
+# HF datasets loading (dataset/loaders.py, STEP 3). Yeh pyarrow + pandas
+# apne saath le aata hai, toh parquet/csv free mein mil jaate hain.
+
+pandas>=2.0.0
+# Explicitly likha hai kyunki loaders.py isse SEEDHA use karega (csv/parquet),
+# indirectly datasets ke through nahi. Implicit dependency pe bharosa mat karo.
+
+
+# ── TOKENIZER BACKENDS ───────────────────────────────────────────────────────
+# Kuch tokenizers (Llama, T5, Gemma...) inke bina load hi nahi honge.
+# Chhote hain, ab hi daal do — baad mein "cannot load tokenizer" debug
+# karne se behtar hai.
+
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+
+
+# ── STATS ────────────────────────────────────────────────────────────────────
+
+scipy>=1.11.0
+# Sirf 2 cheezon ke liye: KS-statistic (plan §7.8b, policy-RM drift alarm) aur
+# Spearman correlation (§7.6, length bias).
+#
+# Baaki SAB hum khud likhenge — ECE, AUROC, quantiles, temperature fit —
+# kyunki humein streaming + DDP-reducible versions chahiye (§5.6, §9.4).
+# Isiliye sklearn NAHI hai is list mein: uska AUROC poora array maangta hai,
+# hamare kaam ka nahi.
+
+
+# ── CONSOLE / PROGRESS ───────────────────────────────────────────────────────
+
+rich>=13.0.0
+# Eval ke slice tables aur warning blocks (plan §9.5).
+
+tqdm>=4.66.0
+
+
+# ── DEV / TEST ───────────────────────────────────────────────────────────────
+
+pytest>=8.0.0
+pytest-cov>=5.0.0
+
+
+# ── OPTIONAL — zarurat pade tab uncomment kar ────────────────────────────────
+# Base install jaan-boojh ke halka rakha hai. RunLogger inke bina bhi
+# pura kaam karega (jsonl + console); yeh sirf extra sinks hain.
+#
+# wandb>=0.17.0            # experiment tracking sink
+# tensorboard>=2.16.0      # alternate sink
+# matplotlib>=3.8.0        # offline plots eval_arrays.npz se (plan P3)
+# nltk>=3.8                # sirf agar purane rhyming project ka CMU reward chahiye

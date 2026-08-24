@@ -1,0 +1,423 @@
+================================================================================
+DATA PROFILING — UNDERSTAND THE DATASET BEFORE TRAINING ON IT
+rlhf/  ·  companion to reward_plan.txt
+================================================================================
+
+STATUS   : planning
+DATE     : 2026-08-18
+BUILD    : TIER 0 -> check on real data -> TIER 1 -> check -> TIER 2
+           (one tier at a time, deliberately)
+
+THE FAILURE THIS PREVENTS
+    Train for six hours, get 95% pairwise accuracy, ship it into PPO, and only
+    then discover the reward model learned "does this look deliberately bad"
+    instead of "is this good". Every number downstream was measuring the wrong
+    thing, and nothing in the training loop could have told you.
+
+    Everything here runs BEFORE a single gradient step.
+
+
+================================================================================
+0.  WHY THIS IS NOT PARANOIA — WHAT THE LITERATURE FOUND
+================================================================================
+
+ (a) BIAS SITS ASYMMETRICALLY IN PREFERENCE DATA.
+     "Flattery, Fluff, and Fog" measured HelpSteer, UltraFeedback and
+     PKU-SafeRLHF and found surface bias features appear MORE OFTEN in chosen
+     responses than rejected ones, consistently across datasets. A reward model
+     will happily latch onto that asymmetry — it is the cheapest signal
+     available.
+
+ (b) SYNTHETIC REJECTIONS TEACH "WHAT ERRORS LOOK LIKE", NOT "WHAT IS BAD".
+     "When Data is the Algorithm" notes that rejected responses produced by
+     perturbing outputs are not drawn from any real model's output distribution,
+     so they carry an artificial signature.
+
+     *** THIS IS EXACTLY OUR RHYMING DATASET. ***
+     Its rejected side was deliberately degraded by GPT-4o-mini in three named
+     ways: plain_answer (70%), too_short (15%), irrelevant_rhyme (15%). So the
+     honest prior is that our RM learns "was this deliberately degraded", and
+     the profiling module exists to confirm or refute that with numbers.
+
+ (c) NEAR-TIE PAIRS ARE NOISE, NOT SIGNAL.
+     Weak-contrast pairs are worth filtering. We cannot see contrast strength
+     without measuring it first.
+
+
+================================================================================
+1.  PRINCIPLES
+================================================================================
+
+ Q1. MEASURE AND REPORT. NEVER DECIDE.
+     This module produces numbers, warnings and plots. It never filters data,
+     never sets config, never changes training. Plan P8 applies: the audit may
+     contradict a declared `data.regime` and say so loudly, but the declaration
+     still wins.
+
+ Q2. CHEAP THINGS ALWAYS RUN. EXPENSIVE THINGS ARE OPT-IN.
+     Tier 0 has zero new dependencies and finishes in seconds, so it runs on
+     every load. Tiers 1-2 need an embedding model, cost money or minutes, and
+     live behind a separate command. A check people skip is a check that does
+     not exist — so do not make the cheap one wait behind the expensive one.
+
+ Q3. EVERY FINDING MUST NAME ITS EVIDENCE.
+     Not "length bias detected" but "chosen is longer in 78% of pairs; a
+     length-only classifier reaches 78% accuracy; your RM must beat that to
+     have learned anything". A number the reader can act on.
+
+ Q4. LOWER BOUNDS ARE STATED AS LOWER BOUNDS.
+     A weak probe scoring high is decisive. The same probe scoring low proves
+     nothing. Every metric says which of the two it is.
+
+ Q5. SIMPLE OVER CLEVER (this module especially).
+     Only two embedding backends: a HuggingFace encoder, or the OpenAI API.
+     No registry, no adapters, no auto-selection.
+
+
+================================================================================
+2.  TWO FILES
+================================================================================
+
+    rlhf/dataset/audit.py          TIER 0. no new deps. seconds. always runs.
+    rlhf/dataset/distribution.py   TIER 1-2. needs embeddings. opt-in.
+
+    CLI:
+        rlhf audit <config>          -> dataset_report.json   (tier 0)
+        rlhf profile-data <config>   -> profile_report.json   (tier 1-2, + plots)
+
+Split because they have different costs, different dependencies and different
+audiences. Tier 0 is a preflight check; tiers 1-2 are an investigation.
+
+
+================================================================================
+3.  TIER 0  —  audit.py     [BUILD THIS FIRST]
+================================================================================
+
+No embeddings. No new dependencies. Target: under 10 seconds on 45K pairs.
+
+--------------------------------------------------------------------------------
+3.1  STRUCTURE  (already specified in reward_plan §3.5 — carried over)
+--------------------------------------------------------------------------------
+    n_groups, n_pairs, K histogram, n_unique_prompts, pairs-per-prompt hist
+    exact duplicate rate (within split)
+    TRAIN/VAL LEAKAGE at prompt level, exact
+    identical chosen == rejected count           (must be 0)
+    all-tied group count                          (valid, but zero signal)
+    slice-key inventory: which keys, cardinality, support per level
+    drop counts carried through from LoadReport   (P4)
+
+--------------------------------------------------------------------------------
+3.2  LENGTH  (the canonical shortcut)
+--------------------------------------------------------------------------------
+    token/char length stats + quantiles for prompt, chosen, rejected
+    p_longer_wins        = P(len(chosen) > len(rejected))
+    baseline_acc_length_only
+        *** THE FLOOR THE REWARD MODEL MUST BEAT ***
+        A classifier whose only rule is "longer wins" already scores this.
+        Report it first, and report it next to every accuracy number later.
+    length_gap_distribution  = |len_c - len_r| / max(len)
+    frac_near_equal_length   (used to define the length-controlled eval slice)
+
+--------------------------------------------------------------------------------
+3.3  *** LEXICAL SEPARABILITY  —  the key addition ***
+--------------------------------------------------------------------------------
+  QUESTION: can a bag-of-words model tell chosen from rejected?
+            If yes, a 50M-parameter reward model will learn the same shortcut,
+            because the shortcut is the cheapest path to low loss.
+
+  METHOD: multinomial Naive Bayes over word unigrams, with a held-out split.
+
+    WHY NAIVE BAYES AND NOT LOGISTIC REGRESSION:
+      - closed form. One pass over tokens. O(T) where T = total tokens.
+        No iterations, no learning rate, no convergence to babysit.
+      - no new dependency. ~40 lines of numpy.
+      - its per-token log-odds ARE the interpretability we want (§3.4).
+      Logistic regression would be modestly stronger. It is the documented
+      upgrade path if we ever want it, not the default.
+
+    HONESTY (Q4): NB is a WEAK model, so its score is a LOWER BOUND on lexical
+    separability.
+        high score  ->  DECISIVE. A shortcut exists, no argument.
+        low score   ->  proves nothing. A stronger lexical model may still win.
+    The report must print that sentence next to the number.
+
+  METRICS:
+    lexical_sep_acc            held-out accuracy, chosen vs rejected
+    lexical_sep_auc
+    lexical_sep_acc_by_slice   per slice level, when slices exist
+
+  READING IT:
+    ~0.50   no lexical signal. The task needs semantics. Good news.
+    ~0.70   a real lexical shortcut exists alongside semantic signal.
+    ~0.95+  the task is lexically trivial. A high RM accuracy means nothing.
+            This is the number that should set `data.regime`, and it is the
+            cross-check against the declared value (reward_plan §7.2).
+
+--------------------------------------------------------------------------------
+3.4  TOP DISCRIMINATING TOKENS  (the actionable half of §3.3)
+--------------------------------------------------------------------------------
+    Rank tokens by NB log-odds and print the top 25 for each side:
+
+        chosen-predicting   : the words that give the label away
+        rejected-predicting :
+
+    An accuracy number tells you a shortcut exists. This tells you WHAT it is,
+    and takes ten seconds to read. On our rhyming data the prediction is that
+    rejected-predicting tokens will include full stops, short function words
+    and "the answer is"-style openings — the signature of plain_answer.
+
+--------------------------------------------------------------------------------
+3.5  SURFACE FEATURE PROBES  (the Flattery/Fluff/Fog measurement)
+--------------------------------------------------------------------------------
+  For each cheap boolean/numeric feature, compute it on both sides and report
+  the ASYMMETRY, not the raw rate:
+
+        p_chosen  = P(feature | chosen)
+        p_rejected= P(feature | rejected)
+        gap       = p_chosen - p_rejected
+        chi2, p   = independence test of feature vs. side
+
+  Default probe set (all regex/counting, no model):
+        newline_count, line_count
+        markdown_bold, markdown_header, bullet_list, numbered_list
+        code_fence
+        emoji
+        question_mark, exclamation
+        hedge_phrases      ("I think", "it's important to note", "generally")
+        refusal_phrases    ("I cannot", "as an AI", "I'm unable")
+        unique_word_ratio  (repetition detector)
+        ends_with_period
+        avg_word_length, all_caps_words
+
+  Project-supplied probes can be added via config (P6). Default set stays small.
+
+  TOP-LEVEL SCALAR: `worst_surface_gap` and its feature name — the single
+  strongest surface shortcut in the dataset.
+
+--------------------------------------------------------------------------------
+3.6  TRIVIAL BASELINE SUITE  (model-free classifiers, all O(N))
+--------------------------------------------------------------------------------
+        baseline_acc_length_only
+        baseline_acc_first_token
+        baseline_acc_punctuation_count
+        baseline_acc_unique_word_ratio
+        baseline_acc_lexical_nb          (§3.3)
+
+    `baseline_acc_best` = max of these, with its name.
+    EVERY reported RM accuracy is printed next to this number, always.
+    An RM that does not clearly beat it has learned nothing worth having.
+
+--------------------------------------------------------------------------------
+3.7  WARNINGS TIER 0 FIRES
+--------------------------------------------------------------------------------
+    lexical_sep_acc > 0.90               -> TASK IS LEXICALLY TRIVIAL
+    baseline_acc_best > 0.80             -> A TRIVIAL MODEL ALREADY WINS
+    p_longer_wins outside [0.4, 0.6]     -> LENGTH IMBALANCE
+    worst_surface_gap > 0.30             -> STRONG SURFACE SHORTCUT: <name>
+    train/val prompt leakage > 0         -> LEAKAGE
+    identical chosen == rejected > 0     -> BROKEN PAIRS
+    declared regime != measured          -> REGIME MISMATCH (reward_plan §7.2)
+    all-tied groups > 5%                 -> MUCH OF THE DATA CARRIES NO SIGNAL
+
+--------------------------------------------------------------------------------
+3.8  ★ CHECKPOINT: RUN TIER 0 ON THE RHYMING DATA AND READ IT
+--------------------------------------------------------------------------------
+    Predictions to test (worth writing down before running, then grading):
+      - baseline_acc_length_only will be HIGH. Rhyming couplets are longer
+        than "Boil it."
+      - lexical_sep_acc will be VERY high (>0.90), because plain_answer is 70%
+        of the rejected side and reads nothing like a couplet.
+      - top rejected-predicting tokens will look like plain prose.
+      - slice-key inventory will be EMPTY, confirming that `strategy` was never
+        saved per row.
+
+    If those hold, the honest conclusion is that this dataset can validate the
+    PLUMBING but cannot validate the reward model. That is a fine thing to
+    know before spending six hours on it.
+
+
+================================================================================
+4.  TIER 1  —  distribution.py, the high-value embedding metrics
+================================================================================
+
+Build only after tier 0 has been run and read.
+
+--------------------------------------------------------------------------------
+4.1  embed_separability
+--------------------------------------------------------------------------------
+    A linear probe on embeddings, chosen vs rejected, held-out.
+    Read it AGAINST the tier-0 lexical number — the gap is the interesting part:
+
+        lexical 0.95, embedding 0.96  ->  pure surface shortcut. No semantics.
+        lexical 0.60, embedding 0.90  ->  real semantic signal exists.
+        lexical 0.60, embedding 0.62  ->  the task is genuinely hard.
+
+    Neither number alone says much. The pair does.
+
+--------------------------------------------------------------------------------
+4.2  delta_direction   (the one I most want to see)
+--------------------------------------------------------------------------------
+    Compute d_i = e_chosen(i) - e_rejected(i) for every pair, then:
+
+        mean_cosine_between_deltas    are all pairs pulling the same way?
+        pca_1_explained_variance      how one-dimensional is "better"?
+        top/bottom examples along PC1 read them; that IS what the RM will learn
+
+    HIGH mean cosine / HIGH PC1 variance  ->  the dataset teaches ONE thing.
+    For our rhyming data the prediction is one dominant axis, roughly
+    "poem vs prose". If so, the reward model is a poem detector, and the
+    delta axis will say so in plain text.
+
+    This is cheap once embeddings exist and I have not seen it reported
+    anywhere. It answers "what will my reward model actually learn" directly.
+
+--------------------------------------------------------------------------------
+4.3  train_val_mmd
+--------------------------------------------------------------------------------
+    MMD between train and val prompt embeddings, with a permutation p-value.
+    PCA down first (standard practice) then an RBF kernel.
+    If train and val differ, val metrics are measuring a different task.
+
+--------------------------------------------------------------------------------
+4.4  semantic_near_duplicates
+--------------------------------------------------------------------------------
+    Cosine > 0.95 pairs, WITHIN split and ACROSS train/val.
+    Exact-match dedup misses paraphrases; cross-split semantic duplicates are
+    leakage that inflates every validation number.
+
+
+================================================================================
+5.  TIER 2  —  exploration and plots
+================================================================================
+
+    clustering            k-means (fixed k) or HDBSCAN over prompt embeddings
+                          *** clusters become SLICES ***
+                          Our rhyming data has NO slice keys at all, so cluster
+                          ids are the only slicing we can get without
+                          regenerating the dataset.
+                          Labels stay `cluster_0..k` — no semantic claims made
+                          by the library (Q1).
+
+    vendi_score           effective number of distinct examples.
+                          45K rows scoring 800 means the data is 800 examples
+                          wearing 45K costumes.
+
+    coverage              nearest-neighbour distance distribution; which
+                          regions are thin
+
+    plots (matplotlib, written to disk, never shown)
+        umap_prompts.png            colored by cluster / slice / split
+        umap_chosen_vs_rejected.png the separability picture
+        delta_pc1_hist.png          the "one axis" evidence
+        length_vs_label.png
+        train_val_overlay.png
+        cluster_sizes.png
+
+
+================================================================================
+6.  EMBEDDING PROVIDER  (deliberately two cases only)
+================================================================================
+
+    profile:
+      embedder: hf                 # hf | openai   -- declared, never inferred
+      model: sentence-transformers/all-MiniLM-L6-v2
+      batch_size: 64
+      max_samples: 20000           # cost/time cap; sampling is logged
+      cache_dir: .cache/embeddings
+
+    hf      -> transformers AutoModel + mean pooling over the attention mask.
+               Runs on the device resolved by core/device.py. Free.
+    openai  -> API key from the environment, never from the config file.
+               Default model text-embedding-3-small.
+
+    Both return float32 [N, D]. Nothing else in the module knows which was used.
+
+    CACHING IS MANDATORY, keyed by (model_id, sha256(text)).
+    Embeddings are the expensive part; a re-run must cost nothing. The cache
+    key includes the model id so switching models cannot silently reuse the
+    wrong vectors.
+
+    COST ON OUR DATA: 45K x 3 texts = 135K embeddings.
+        openai text-embedding-3-small : ~7M tokens, roughly $0.15, ~5 min
+        hf MiniLM on MPS              : free, ~3 min
+
+    NO auto-selection between backends, no fallback chain. If the declared
+    backend is unavailable it is a hard error (P8, and reward_plan §5.1).
+
+
+================================================================================
+7.  COMPLEXITY TRAPS  (decide these up front, not after it hangs)
+================================================================================
+
+    45K pairs means a naive O(n^2) pass is 2 BILLION comparisons.
+
+    metric                naive          what we do
+    ------------------------------------------------------------------------
+    lexical NB            O(T)           already optimal, single pass
+    surface probes        O(T)           single pass, regex
+    exact duplicates      O(n) hashing   never compare pairwise
+    near-duplicates       O(n^2)         ANN index, or cap via sampling
+    MMD                   O(n^2) kernel  subsample to ~5K, or linear-time
+                                         estimator; PCA first
+    Vendi score           O(n^3) eigen   O(d^2 n) via the embedding Gram trick,
+                                         and subsample above ~20K
+    UMAP                  O(n log n)     fine at 45K, not at 5M
+    k-means               O(n k d i)     fine
+    delta PCA             O(n d^2)       fine at d=384
+
+    RULE: anything above O(n log n) gets an explicit `max_samples`, and the
+    sampling is REPORTED in the output (P4 — no silent reductions).
+
+
+================================================================================
+8.  OUTPUTS
+================================================================================
+    dataset_report.json     tier 0. Machine readable, one flat dict.
+    profile_report.json     tiers 1-2.
+    profile/*.png           plots.
+    embeddings cache        .cache/embeddings/<model_id>/<hash>.npy
+
+    Console for both: a short table, then the fired warnings, then the single
+    line that matters most —
+
+        baseline_acc_best = 0.78 (length_only)
+        -> any reward model accuracy below ~0.80 has learned nothing.
+
+
+================================================================================
+9.  BUILD ORDER
+================================================================================
+    STEP 5   audit.py  TIER 0                       <- next
+    ★        run it on the rhyming data, read it, grade the §3.8 predictions
+    STEP ?   distribution.py TIER 1 + embedder
+    ★        run it, read it
+    STEP ?   TIER 2 clustering + plots
+
+    One tier at a time. Each tier is read on real data before the next is
+    written, because what tier 0 says will change what tier 1 needs to ask.
+
+
+================================================================================
+10.  REFERENCES
+================================================================================
+    Flattery, Fluff, and Fog: Diagnosing and Mitigating Idiosyncratic Biases
+        in Preference Models
+        https://arxiv.org/html/2506.05339v2
+    When Data is the Algorithm: A Systematic Study and Curation of Preference
+        Optimization Datasets
+        https://arxiv.org/pdf/2511.10985
+    Towards Understanding Valuable Preference Data for LLM Alignment
+        https://arxiv.org/html/2510.13212
+    The Vendi Score: A Diversity Evaluation Metric for Machine Learning
+        https://arxiv.org/html/2210.02410v2
+    Cousins of the Vendi Score: A Family of Similarity-Based Diversity Metrics
+        https://proceedings.mlr.press/v238/pasarkar24a/pasarkar24a.pdf
+    MMD drift detection (implementation reference)
+        https://docs.seldon.io/projects/alibi-detect/en/latest/cd/methods/mmddrift.html
+    5 methods to detect drift in ML embeddings
+        https://www.evidentlyai.com/blog/embedding-drift-detection
+    Detecting covariate drift in text data using document embeddings
+        https://arxiv.org/pdf/2309.10000
+    How to Evaluate Reward Models for RLHF
+        https://arxiv.org/pdf/2410.14872
+================================================================================

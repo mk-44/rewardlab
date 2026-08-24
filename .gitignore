@@ -1,0 +1,30 @@
+# ── local only, never pushed ─────────────────────────────────────────────────
+tests/
+notebooks/
+venv/
+.venv/
+rough_work/
+
+# ── python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── runs / artifacts ─────────────────────────────────────────────────────────
+runs/
+checkpoints/
+logs/
+*.pt
+*.safetensors
+*.npz
+
+# ── os / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+.cache/

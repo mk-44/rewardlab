@@ -1,0 +1,78 @@
+============================================================================
+DATASET PROFILE   (tier 1: embeddings)
+============================================================================
+  source          : preferences_train.json [2k uniform sample]
+  pairs           : 2,000   (sampled from 44,953)
+
+---- EMBEDDINGS  [ok] ------------------------------------------------------
+  hf : sentence-transformers/all-MiniLM-L6-v2   dim 384
+  texts 6,000   unique cached 10,743     hits 6,000/6,000   embedded 0
+  mean_norm 5.084   effective_rank 57.5
+
+---- SEPARABILITY  [ok] ----------------------------------------------------
+  slice                         pairs     acc     auc     drop
+  raw                           2,000   0.990   0.999        -
+  match_word_count                161   0.967   0.988   +0.023
+  match_punctuation               170   0.971   0.999   +0.020
+  match_char_length               219   0.976   0.998   +0.014
+  match_hedging                 1,988   0.982   0.993   +0.008
+  match_has_comma                 583   0.982   0.997   +0.008
+  match_has_newline               292   0.984   0.999   +0.007
+  match_multi_line                292   0.984   0.999   +0.007
+
+  >> frac_surface_controlled = 0.004   (7 pairs where no surface feature differs)
+  >> separability_raw = 0.990
+  >> separability_min = 0.967   <-- IMAANDAAR NUMBER
+     top confound    = match_word_count (+0.023)
+
+---- DELTA DIRECTION  [ok] -------------------------------------------------
+  mean_pairwise_cosine  0.042
+  frac_aligned_w_mean   0.971
+  pc explained var      [0.055, 0.043, 0.019]
+  effective_dim         95.7   (unit arrows 102.5)
+  delta norm            q05 3.52   q50 5.12   q95 6.39
+
+  PC1 ke dono sire  (yahi axis model seekhega)
+    + chosen   'The skies would gleam with a vibrant hue so bright,  \nNature'
+      rejected 'Pollution elimination would improve air and water quality.'
+    + chosen   'A dance of hearts that sways with grace,\nIn every glance, a '
+      rejected 'Good, I guess.'
+    - chosen   "Toss them in olive oil, sprinkle with zest,\nRoast till they'"
+      rejected 'The kangaroo hops while the moon shines bright,\nIn the garde'
+    - chosen   'With a robot by your side, tasks will be a breeze,\nLife’s li'
+      rejected 'In the sky, the birds do sing, \nWhile the flowers bloom and '
+
+---- GROUNDING  [ok] -------------------------------------------------------
+  cos(prompt, chosen)   0.469
+  cos(prompt, rejected) 0.589
+  relevance_gap         -0.121
+  rejected off topic    16.8%
+
+---- DISTRIBUTION SHIFT  [not_applicable] ----------------------------------
+  prompt overlap  100.0%
+  prompt      mmd2 0.00010   p 0.090   [not_applicable]
+  chosen      mmd2 0.00012   p 0.050   [not_applicable]
+  rejected    mmd2 0.00009   p 0.075   [not_applicable]
+  reason: prompt overlap 100.0%
+
+---- NEAR DUPLICATES  [ok]  tau=0.95 ---------------------------------------
+  within train    5   rate 0.0000
+  within val      9
+  cross split     793   max cos 1.000
+  nn cosine       q50 0.594   q95 0.879
+  compared        913
+
+---- DIVERSITY  [ok] -------------------------------------------------------
+  vendi prompt    126.3   of 2,000 rows
+  vendi chosen    102.2
+  vendi rejected  143.0
+  eff sample rate 0.0632
+  frac isolated   0.196
+
+---- WARNINGS --------------------------------------------------------------
+  !  SURFACE DIFFERS BY CONSTRUCTION  frac_surface_controlled=0.004 < 0.05. Chosen and rejected almost never share a format, so no slice can separate content from format.
+  !  EVEN THE SHORTCUT FREE SLICE IS EASY  separability_min=0.967 > 0.75. The task stays trivial after every confound is controlled.
+  !  SEMANTIC LEAKAGE  793 cross split near duplicate pairs at cosine > 0.95. Exact match checks miss these.
+  !  SHIFT TEST NOT MEANINGFUL  prompt overlap 100.0%. Re-split at the prompt level and this test becomes informative.
+
+============================================================================

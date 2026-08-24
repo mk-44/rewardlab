@@ -1,0 +1,1285 @@
+================================================================================
+REWARD MODEL — ARCHITECTURE, LOGGING & EVALUATION PLAN
+rlhf/  ·  Phase 1 of 4  (RM → PPO → DPO → GRPO)
+================================================================================
+
+STATUS   : planning / not yet implemented
+AUTHOR   : Mayank (implementation)  ·  Claude (review, pseudocode, critique)
+DATE     : 2026-08-17
+REV      : 4   (rev 1 fixed backbone + pairwise data; rev 2 generalised both;
+                rev 3 adds execution: device / precision / multi-GPU — §5;
+                rev 4 DROPS format auto-detection in favour of a declared
+                config — §3.2. Implementing the guess is what showed it was
+                not worth having.)
+
+PRIME DIRECTIVE
+    This is a GENERAL-PURPOSE LIBRARY, destined to be pip-installable.
+    Nothing dataset-specific, model-specific, or project-specific may live
+    inside the package. Projects sit OUTSIDE and consume it.
+    Corollary that drives §7: when a metric does not apply to the data at hand,
+    it reports None WITH A REASON. It never crashes, and it never silently
+    reports a meaningless number.
+
+READ FIRST
+    - rhyme-blog/content/posts/ppo-from-first-principles.md
+        §"Bradley-Terry, derived", §"Only differences are learnable",
+        §"Every term trusts the reward model", §"What the penalty actually does"
+    - RL/  (previous implementation — this plan is written against its
+        post-mortem; see §0)
+
+
+================================================================================
+0.  LESSONS FROM RL/  →  HARD INVARIANTS
+================================================================================
+
+ L1. TWO FUNCTIONS DISAGREED ABOUT WHICH POSITIONS COUNT.
+     generate() zeroed all prompt positions of log_probs; get_log_probs() zeroed
+     only position 0. Result: ratios of exp(-5) at prompt positions,
+     clip_fraction 0.93 at step 0, and a logged "KL" of +1.059 when the true KL
+     was exactly 0.
+     -> I1: exactly ONE function decides which positions are scored. Every
+        position-aligned tensor travels WITH its mask, never beside it.
+
+ L2. TRAIN/EVAL MODE PARITY WAS NEVER CHECKED.
+     Dropout p=0.1 active in the update, inactive in rollout — the estimator was
+     wrong before a single gradient was applied.
+     -> I2: dropout state is explicit, logged, and asserted at startup by
+        scoring one batch twice and requiring bitwise equality when off.
+        (TRL sets disable_dropout=True by default for RM training. We assert it.)
+
+ L3. CONFIG KNOBS DECLARED, VALIDATED, PRINTED — AND NEVER READ.
+     ratio_clip_max, normalize_rewards, reward_clip_range, RunningValueNormalizer.
+     The config lied about what the code did.
+     -> I3: fields register on read. Declared-set == read-set, or the build fails.
+
+ L4. THE REWARD SCALE WAS NEVER MEASURED, AND IT IS THE MOST CONSEQUENTIAL
+     NUMBER THE RM PRODUCES.
+     pi*(a|s) ∝ pi_ref(a|s)·exp(r/beta) — reward and temperature enter ONLY as
+     r/beta. Doubling RM output scale exactly halves the leash. The old RM
+     trained in [-15,-5] and PPO had to bolt on an ad-hoc ClampedReward.
+     -> I4: the RM emits a normalisation artifact (§8) as a first-class output.
+        PPO consumes it. No ad-hoc clamping downstream, ever.
+
+ L5. AN UNBOUNDED SCALAR ENTERED A REWARD STREAM WITH NO AUDIT.
+     Composite reward was provably bounded by +2.2 yet reward_mean logged 16.08,
+     all of it leaking from the KL term. The bound was never asserted.
+     -> I5: every reward-producing component declares its output range; the
+        range is asserted at runtime and written into the run header.
+
+
+================================================================================
+1.  DESIGN PRINCIPLES
+================================================================================
+
+ P1. CONTRACTS AT THE BOUNDARY, NOT ASSERTIONS EVERYWHERE.
+     Validate at construction and at module edges. Inside a module, trust the
+     contract. RL/ had assert_* in every hot loop; that noise hid the real bugs.
+
+ P2. THE LOGGER IS PART OF THE ALGORITHM.
+     If a quantity governs a decision, it is logged, with units, at the
+     granularity the decision is made. Two different KLs never share a log key.
+
+ P3. EVERY METRIC IS RECOMPUTABLE FROM A SAVED ARRAY.
+     Each eval dumps raw per-item arrays. No metric exists only as a scalar.
+
+ P4. NO SILENT REDUCTIONS.
+     Anything that drops data (truncation, length filtering, tie handling,
+     dedup, distributed padding) reports a count AND a rate.
+
+ P5. NO SILENT INAPPLICABILITY.          *** the generality rule ***
+     A metric that cannot be computed on this data returns
+     MetricResult(value=None, status=..., reason=...). Never a crash, never a
+     fabricated number, never an unexplained absence from the log.
+
+ P6. THE PACKAGE KNOWS NOTHING ABOUT YOUR PROJECT.
+     No dataset names, no model names, no paths, no task assumptions inside
+     rlhf/. Everything project-specific is injected via config or registry.
+
+ P8. ASK THE USER; DO NOT INFER.                                 [rev 4]
+     Support every case, but take from the user everything the user can tell
+     us. This is the HuggingFace pattern: `AutoModel.from_pretrained` reads
+     `architectures` out of the model's own config.json — metadata its author
+     DECLARED — and HF never sniffs your CSV to decide which column is the
+     label; you pass `text_column=`.
+
+     The line, stated once:
+         read declared metadata        yes   (config.architectures, model_type)
+         probe hardware facts          yes   (is bf16 supported on this GPU)
+         infer intent from the data    NO    (which column is the prompt,
+                                              is this data human or synthetic)
+
+     A wrong inference is worse than a required field, because the required
+     field fails loudly at startup and the inference fails silently at scale.
+     Where a guess is genuinely useful, it goes into a human-facing tool
+     (`rlhf inspect`) or an error message — somewhere a person reads it and
+     decides. Cost of this rule: a few more config lines. Benefit: a whole
+     class of silent wrongness stops existing.
+
+ P7. THE EXECUTION ENVIRONMENT IS DISCOVERED, NOT ASSUMED.       [rev 3]
+     Device and dtype support is PROBED at startup with a real op, never
+     inferred from a version string. The resolved (device, dtype, world_size,
+     amp) tuple is logged, and any fallback is loud. Numerics that affect
+     correctness (§5.3) are pinned to fp32 regardless of what the user asked
+     for, and the pinning is stated in the run header.
+
+
+================================================================================
+2.  REPO LAYOUT  (pip-package shape from day 1)
+================================================================================
+
+rlhf/                                  <- the installable package (import rlhf)
+├── plans/
+│   └── reward_plan.txt                <- this file
+│
+├── core/                              shared by RM / PPO / DPO / GRPO
+│   ├── contracts.py       typed errors + shape/dtype/device/finite assertions
+│   ├── masking.py         *** SINGLE SOURCE OF TRUTH for scored positions ***
+│   ├── device.py          device+dtype resolution, capability probe (§5.1-5.2)
+│   ├── distributed.py     init/teardown, rank helpers, gather protocol (§5.6)
+│   ├── determinism.py     seeding (per-rank), RNG capture/restore, env print
+│   ├── stats.py           streaming accumulators, ALL reduction-friendly (§5.6)
+│   ├── metrics.py         MetricResult / MetricSpec / availability engine (§7.1)
+│   ├── runlog.py          RunLogger: jsonl + console + optional wandb/tb sinks
+│   └── config/
+│       ├── base.py        dataclass tree, YAML load, CLI override, resolution
+│       └── registry.py    field-read tracking (enforces I3)
+│
+├── dataset/                           *** everything data ***
+│   ├── schema.py          PreferenceGroup (canonical) + PairView + SliceKeys
+│   ├── formats.py         record -> PreferenceGroup for each declared format
+│   ├── loaders.py         json / jsonl / csv / parquet / HF datasets
+│   ├── tokenize.py        templating, truncation policy, prompt spans
+│   ├── collate.py         batching for pairwise and K-way
+│   ├── sampler.py         group-aware distributed sampler (§5.7)
+│   ├── audit.py           dataset report + trivial baselines (§3.5)
+│   └── registry.py        @register_dataset for named recipes (user-supplied)
+│
+├── reward_model/                      *** everything model ***
+│   ├── config.py          RMConfig = {model, data, exec, train, loss, eval, log}
+│   ├── backbone.py        auto-detect + explicit override + custom registry(§4)
+│   ├── pooling.py         last_token | eos | mean | cls | custom
+│   ├── head.py            scalar head (n-layer MLP), ALWAYS fp32 (§5.3)
+│   ├── model.py           RewardModel = backbone + pooling + head
+│   ├── losses.py          BT + variants
+│   ├── trainer.py         the loop
+│   ├── evaluator.py       *** the metric suite (§7) ***
+│   ├── calibrate.py       temperature/affine fit -> normalisation artifact
+│   └── artifacts.py       hard-pair dumps, arrays, reliability data
+│
+└── cli/
+    └── train_reward.py    `rlhf-train-reward --config x.yaml --lr 1e-5 ...`
+                           `torchrun --nproc_per_node=4 -m rlhf.cli.train_reward`
+
+projects/                              <- OUTSIDE the package
+└── <name>/  config.yaml, data/, custom rewards, custom backbones, checkpoints/
+
+LATER: rlhf/ppo/, rlhf/dpo/, rlhf/grpo/ — all reusing core/ and dataset/.
+
+
+================================================================================
+3.  DATA  —  ONE CANONICAL FORM, MANY INPUT FORMATS
+================================================================================
+
+3.1  THE CANONICAL OBJECT  (K-way; pairwise is the K=2 special case)
+
+  PreferenceGroup:
+      prompt      : str
+      responses   : list[str]                    # K >= 2
+      ranking     : list[int] | None             # rank per response, 0 = best;
+                                                 # ties allowed via equal ranks
+      scores      : list[float] | None           # graded strength, if present
+      slices      : dict[str, str]               # ARBITRARY slice keys (§7.7)
+      meta        : dict                         # free-form, carried to artifacts
+      uid         : int                          # GLOBAL index, assigned at load
+                                                 # (needed for distributed dedup,
+                                                 #  §5.7)
+
+  A pairwise example lifts trivially:
+      responses = [chosen, rejected], ranking = [0, 1]
+
+  WHY CANONICALISE ON K-WAY.
+    - Best-of-N eval (§7.8a) comes free, and BoN is our best downstream proxy.
+    - Pair extraction from a K-way group is a policy decision we can expose:
+      all_pairs | adjacent_only | best_vs_rest | sampled(n).
+    - Retrofitting K-way onto a pairwise core later would touch every module.
+
+  PairView is the training-time projection:
+      PairView(prompt, chosen, rejected, slices, margin_hint, uid)
+  produced by `pair_policy(group)`. The trainer only ever sees PairViews;
+  the evaluator sees both.
+
+3.2  FORMAT IS DECLARED, NEVER GUESSED             [rev 4 — see the note below]
+
+  `data.format` is REQUIRED. There is no `auto`. One of:
+
+      pairwise            {prompt, chosen, rejected}
+      pairwise_implicit   {chosen, rejected}          prompt is inside the text
+      kway                {prompt, responses[], ranking[] or scores[]}
+      arena               {prompt, response_a, response_b, winner}
+
+  `fields` DEFAULTS TO THE CANONICAL NAMES, so it is written only when the
+  file disagrees, and only for the keys that disagree:
+
+      data:                          # common case: nothing to write
+        path:   .../preferences_train.json
+        format: pairwise
+
+      data:                          # partial override is fine
+        path:   .../mydata.json
+        format: pairwise
+        fields:
+          prompt: question           # chosen / rejected keep their defaults
+        slice_keys: [strategy, source]
+        max_drop_rate: 0.05
+
+  Defaulting to canonical names (rather than to None meaning "use canonical")
+  also removes the two-level fallback inside the record reader: the lookup
+  becomes `record.get(getattr(fields, canonical))` and nothing else.
+
+  LOADING THEN HAS NO DECISIONS IN IT. It reads the declared format, pulls the
+  declared columns, and builds groups. Validation is a plain existence check:
+
+      DataError: format 'pairwise' needs column 'rejected' but the file has
+                 only [chosen, prompt]. Fix `fields:` or change `format:`.
+
+  *** WHY rev 4 REVERSED rev 1-3 ON THIS ***
+  Rev 1-3 specified auto-detection from column signatures. It was implemented,
+  and building it exposed the problem: making the guess robust required a
+  `min_presence` threshold, a "most specific signature wins" tie-break, and an
+  ambiguity error path. A heuristic that needs a tuning knob to work is a
+  heuristic worth deleting. It also contradicted our own rule ("detect but
+  never guess") — detection IS a guess, just better dressed.
+
+  The user always knows their dataset and is writing a config regardless. Two
+  declared lines remove ~80 lines of machinery and every failure mode with it.
+  Versatility is unchanged: the format enum plus the field map still cover
+  every shape. What changed is that a wrong answer is now impossible rather
+  than merely unlikely.
+
+  GUESSING MOVES TO A HUMAN-IN-THE-LOOP TOOL, where it is safe:
+
+      $ rlhf inspect data/preferences_train.json
+        columns    : chosen, prompt, rejected
+        looks like : pairwise
+        suggested  : format: pairwise
+                     fields: {}
+
+  Same logic, but a person reads it and decides. A bad suggestion gets caught;
+  a bad auto-detection silently mis-parses 45K rows.
+
+  Named recipes live in dataset/registry.py via @register_dataset and are
+  supplied BY THE PROJECT, not shipped in the package (P6).
+
+3.3  TOKENISATION POLICY  (decide once, log it, never vary silently)
+
+  - Text assembled by TEMPLATE(prompt, response). The exact template string goes
+    into the run header — changing it changes the RM and must show in a diff.
+  - Chat models: if the tokenizer has a chat template and
+    `data.use_chat_template` is true, apply it; log the template hash.
+  - Truncation: LEFT-truncate the prompt, NEVER the response tail. The score is
+    read at the response end; truncating the response destroys the thing being
+    scored. Report `truncation_rate_prompt` / `truncation_rate_response`
+    separately; any response truncation at all is a loud WARN.
+  - Over-length pairs: dropped, counted, rate logged (P4). TRL silently filters
+    these; we will not.
+  - PADDING SIDE: RIGHT for the reward model. We only score, never generate, so
+    right-padding plus "index the last real token via masking.py" avoids the
+    entire left-pad off-by-one bug class that bit RL/ — and sidesteps the MPS
+    SDPA NaN bug, which triggers specifically when position 0 is masked
+    (§5.1). Left-pad stays the rule in the PPO package, where generation happens.
+  - Chosen/rejected tokenised independently and stacked as a 2B batch -> one
+    forward pass, shared psi, one graph. K-way stacks as K*B.
+
+3.4  MASKS  (enforces I1)
+
+  core/masking.py exposes exactly one function:
+
+      scored_positions(input_ids, attention_mask, prompt_len) -> BoolTensor[B,T]
+
+  Pooling, any per-token head, and every downstream consumer use it. No module
+  computes a mask inline. This is the direct fix for L1.
+
+3.5  DATASET AUDIT  (dataset/audit.py — run before ANY training, on rank 0,
+                     then broadcast)
+
+  Emits dataset_report.json + console table:
+      - n_groups, n_pairs, K histogram, n_unique_prompts, pairs/prompt histogram
+      - exact + near-duplicate rate (Jaccard >= 0.85) within split
+      - *** TRAIN/VAL LEAKAGE: prompt-level overlap, exact + near ***
+      - token-length stats for prompt / each response, quantiles
+      - LENGTH SEPARABILITY: P(len_chosen > len_rejected).
+        A length-only classifier already achieves that accuracy. THIS IS THE
+        FLOOR THE RM MUST BEAT. Logged as `baseline_acc_length_only`.
+      - trivial-baseline suite, all model-free:
+            baseline_acc_length_only
+            baseline_acc_first_token
+            baseline_acc_punctuation_count
+        An RM that does not clearly beat all three is learning a shortcut.
+      - slice-key inventory: which keys exist, cardinality, support per level
+        (this is what the availability engine reads in §7.1)
+      - SLICE VOCABULARY: str -> int id map, needed to gather slice keys as
+        tensors under DDP (§5.6). Built once here, frozen, written to
+        dataset_report.json.
+      - separability estimate -> sets the `synthetic_regime` flag (§7.2)
+      - identical chosen==rejected count (must be 0)
+
+
+================================================================================
+4.  MODEL  —  ANY HF MODEL, OR A CUSTOM ONE
+================================================================================
+
+4.1  BACKBONE RESOLUTION  (`model.backbone_type: auto | encoder | decoder |
+                            encoder_decoder | custom`)
+
+  DEFAULT = auto. Resolution order, first hit wins, decision LOGGED with reason:
+
+    1. explicit config value (never overridden by detection; if detection
+       disagrees, WARN loudly with both answers and proceed with the config)
+    2. AutoConfig.architectures  — *ForCausalLM -> decoder
+                                   *ForMaskedLM / *ForSequenceClassification on
+                                   a known encoder family -> encoder
+    3. config.is_encoder_decoder -> encoder_decoder
+    4. config.is_decoder flag
+    5. model_type against known family tables (extensible via registry)
+    6. NO MATCH -> hard error:
+         "Cannot infer backbone type for '<name>' (model_type=<x>,
+          architectures=<y>). Set model.backbone_type explicitly to one of
+          encoder|decoder|encoder_decoder, or register a custom adapter."
+       We ask rather than guess. A wrong guess silently produces a broken
+       pooling index and a plausible-looking loss curve.
+
+  CUSTOM MODELS. A project registers an adapter satisfying the protocol:
+
+      @register_backbone("my_arch")
+      class MyBackbone(BackboneAdapter):
+          backbone_type = "decoder"
+          def forward(ids, mask) -> BackboneOutput(hidden[B,T,D], pooled|None)
+          hidden_size: int
+
+  Contract validated at init by a real dummy forward pass (RL/ got this right —
+  keep it): shape, dtype, finiteness, and that backbone_type matches the claim.
+
+4.2  POOLING  (`model.pooling: auto | last_token | eos | mean | cls | custom`)
+      auto:  decoder -> last_token ; encoder -> cls ; encoder_decoder -> mean
+      last_token : hidden at final scored position (index FROM masking.py)
+      eos        : hidden at first EOS inside the response span
+      mean       : masked mean over scored positions
+      cls        : hidden[:, 0]
+      custom     : registered callable
+    Pooling choice + how it was resolved are logged.
+
+4.3  HEAD
+      num_layers=1 : Linear(D -> 1)                             ("linear probe")
+      num_layers=2 : Linear(D->h) GELU Dropout Linear(h->1)     [default]
+      init N(0, init_std<=0.02), bias 0. Small init keeps the initial score
+      distribution tight around 0, so initial loss = log 2 = 0.6931.
+      *** THE HEAD ALWAYS RUNS IN FP32, EVEN UNDER AMP. See §5.3. ***
+
+      *** ASSERT AT STEP 0: |loss - log 2| < 0.05 ***
+      One assertion that catches broken init, broken masking, AND label flips.
+
+4.4  FREEZING   full | head_only | last_k_layers(k) | lora(r, alpha, targets)
+      Log trainable/total param counts and the head:backbone grad-norm ratio
+      (§7.9) so it is visible which part is actually learning.
+
+
+================================================================================
+5.  EXECUTION — DEVICE, PRECISION, MULTI-GPU                          [rev 3]
+================================================================================
+
+SCOPE (decided): devices {cpu, cuda, mps}; dtypes {float32, float16, bfloat16};
+multi-GPU supported on cuda. Everything below follows from those three.
+
+--------------------------------------------------------------------------------
+5.1  DEVICE RESOLUTION   (`exec.device: auto | cpu | cuda | mps | cuda:N`)
+--------------------------------------------------------------------------------
+  auto -> cuda if available, else mps, else cpu.
+  Explicit always wins; if the requested device is unavailable it is a HARD
+  ERROR, never a silent fallback to cpu. (Silently training on cpu because a
+  CUDA_VISIBLE_DEVICES typo hid the GPU is a day-wasting failure mode.)
+
+  Per-device notes recorded in the run header:
+    cpu   single process only. bfloat16 works but is slow without AVX512-BF16 /
+          AMX; float16 has incomplete CPU kernel coverage for training.
+    cuda  full support. Multi-GPU via torchrun (§5.5).
+    mps   single device only, no distributed backend. AMP/GradScaler not
+          supported. ATTENTION IMPL: RL/ documented an MPS SDPA NaN with
+          left-padded masks (online softmax hits exp(-inf - -inf) at a masked
+          position 0). We right-pad (§3.3), so it should not trigger — but
+          `exec.attn_implementation: auto|eager|sdpa` stays exposed, defaulting
+          to eager on mps until we have verified otherwise on this padding
+          scheme. Cheap insurance; log which was used.
+
+--------------------------------------------------------------------------------
+5.2  DTYPE RESOLUTION + CAPABILITY PROBE   (`exec.dtype: auto|float32|float16|
+                                             bfloat16`, `exec.strict_dtype: bool`)
+--------------------------------------------------------------------------------
+  We do NOT hardcode a support matrix from version strings. We PROBE (P7):
+
+      def probe(device, dtype) -> bool:
+          x = torch.randn(8, 8, device=device, dtype=dtype, requires_grad=True)
+          (x @ x.T).sum().backward()
+          return x.grad is not None and torch.isfinite(x.grad).all()
+
+  Forward AND backward, because plenty of dtypes forward fine and have no
+  backward kernel. Probe runs once at startup; the result table goes into
+  run.json.
+
+  Reference expectations (what the probe usually confirms — the probe is the
+  authority, this table is documentation):
+
+      device   float32   bfloat16                float16
+      cpu      yes       yes (slow w/o AMX)      partial, training unreliable
+      cuda     yes       yes on sm_80+ (Ampere)  yes, REQUIRES GradScaler
+      mps      yes       partial, verify         partial, verify
+
+  auto  -> bfloat16 on cuda sm_80+, else float32. Never auto-selects float16:
+           fp16 training needs loss scaling and is a deliberate choice.
+  strict_dtype=true  -> probe failure is a hard error.
+  strict_dtype=false -> fall back to float32 with a LOUD warning naming the
+                        probe that failed.
+
+--------------------------------------------------------------------------------
+5.3  *** THE PRECISION INVARIANT — THE MOST IMPORTANT PART OF THIS SECTION ***
+--------------------------------------------------------------------------------
+  THE HEAD OUTPUT, THE LOSS, AND ALL METRICS ARE COMPUTED IN FLOAT32,
+  REGARDLESS OF `exec.dtype`.
+
+  WHY, WITH NUMBERS. The BT loss consumes a DIFFERENCE of two scalars:
+        L = softplus(r_l - r_w)
+  The margin IS the entire signal. Low-precision floats have absolute
+  resolution proportional to magnitude:
+
+        ulp(v) = 2^(exponent(v) - mantissa_bits)
+
+        format     mantissa bits   ulp at |r| ~ 100    ulp at |r| ~ 1
+        float32    24              7.6e-6              1.2e-7
+        float16    11              0.0625              0.00098
+        bfloat16    8              0.5                 0.0078
+
+  A margin of 0.5 at score magnitude ~100:
+        float32   ~65,000 representable levels
+        float16   ~8 levels
+        bfloat16  ONE ULP — the margin is at the resolution limit
+
+  So in bf16, an RM whose scores have drifted to |r| ~ 100 cannot represent its
+  own learning signal. Accuracy might survive (it only needs the sign) but the
+  margin distribution (§7.3), ECE (§7.5), and temperature_hat (§7.5 -> the beta
+  export, §8) would all be quantisation noise. Note bf16 is WORSE than fp16
+  here: it trades mantissa for exponent, and we need mantissa.
+
+  IMPLEMENTATION:
+    - backbone runs under autocast at exec.dtype
+    - pooled hidden is `.float()` before the head
+    - head parameters are fp32 master weights
+    - loss computed in fp32, outside autocast
+    - all accumulators, quantiles, ECE, AUROC, temperature fit in fp32 (fp64 for
+      the ECE binning if it is ever cheap enough — it is; the arrays are small)
+
+  *** A CONSEQUENCE WORTH NAMING ***
+  This makes score CENTERING (§6.2c/d) a numerical necessity under low
+  precision, not merely an aesthetic one. At |r| ~ 1 the bf16 ulp is 0.0078
+  (64x better than at |r| ~ 100). Keeping scores near zero buys back two orders
+  of magnitude of margin resolution. We already center for identifiability
+  reasons; low precision makes it load-bearing. LOG `score_abs_mean` every step
+  and WARN above `exec.score_magnitude_warn` (default 20) when dtype != fp32.
+
+--------------------------------------------------------------------------------
+5.4  AMP POLICY
+--------------------------------------------------------------------------------
+      dtype      autocast   GradScaler   notes
+      float32    off        no           reference path; always correct
+      bfloat16   on         NO           wide exponent, no scaling needed
+      float16    on         YES          required; unscale_ before clipping
+
+  Rules:
+    - GradScaler only on cuda. Requesting fp16 on mps/cpu -> hard error with a
+      message pointing at float32 or bfloat16.
+    - `scaler.unscale_(opt)` MUST precede grad-norm clipping, or the logged
+      grad_norm is the scaled one and the clip threshold means nothing. (This is
+      a classic silent bug; RL/ got the ordering right — preserve it.)
+    - `grad_scale` and `scaler_skipped_steps` are logged. A scaler that skips
+      many steps is a real signal, not noise.
+    - Under fp16, log `inf_check_count`. Non-finite gradients are counted, not
+      hidden.
+
+--------------------------------------------------------------------------------
+5.5  MULTI-GPU   (`exec.distributed: auto | none | ddp | fsdp`)
+--------------------------------------------------------------------------------
+  DDP is the default and the right tool: reward models are small (a scalar head
+  on a backbone) and fit on one device in nearly every case we care about. FSDP
+  is a phase-2 addition for backbones that do not fit; the interface is designed
+  so it is a swap, not a rewrite.
+
+  Launch: `torchrun --nproc_per_node=N -m rlhf.cli.train_reward --config ...`
+  auto -> ddp when WORLD_SIZE > 1 and device == cuda, else none.
+  Requesting ddp on mps/cpu -> hard error (no supported backend worth using).
+
+  MODEL WRAPPING
+    - init model on the correct local device BEFORE wrapping
+    - identical seed for parameter init across ranks (§5.8) so all ranks start
+      from the same weights; assert this by all-reducing a parameter checksum
+      after init. Cheap, and it catches a whole class of silent divergence.
+    - `find_unused_parameters=False` (assert it): with a frozen backbone
+      (head_only mode) some params legitimately get no grad, which DDP will
+      complain about — the fix is to exclude them from the wrapped module, not
+      to flip the flag on. Flipping it on hides real bugs and costs throughput.
+    - always `unwrap_model()` before saving or scoring outside the loop.
+
+  EFFECTIVE BATCH
+      effective_batch = per_device_batch * world_size * grad_accum
+    Logged explicitly at startup. All batch-divisibility asserts operate on
+    per_device_batch. NOTE: DDP averages gradients across ranks, so world_size
+    changes the effective batch — we do NOT auto-scale the LR (auto-scaling
+    rules are model-dependent folklore), but we DO log effective_batch and warn
+    if it changed relative to a resumed checkpoint.
+
+--------------------------------------------------------------------------------
+5.6  DISTRIBUTED EVAL — THE GATHER PROTOCOL
+--------------------------------------------------------------------------------
+  This is where a naive implementation quietly produces wrong metrics. Our
+  metric suite splits cleanly into two classes:
+
+  (A) REDUCIBLE FROM SUFFICIENT STATISTICS  (all_reduce SUM, exact)
+      count, correct_count, tie_count                 -> accuracy, tie_rate
+      sum(delta), sum(delta^2)                        -> mean, std, cohens_d
+      loss_sum
+      fixed-bin histogram counts                      -> margin_hist, score_hist
+      sum(x), sum(y), sum(xy), sum(x^2), sum(y^2)     -> Pearson length corr
+      per-slice versions of all of the above
+      TEMPERATURE FIT: the bisection objective
+            f(z) = mean(-delta * sigmoid(-delta * z))
+      is a MEAN, so each bisection step all-reduces one scalar. ~50 iterations
+      of one scalar each — negligible. Exact, fully distributed. (Nice result:
+      our most important export needs no gather.)
+
+  (B) NEEDS THE GLOBAL ARRAY
+      exact quantiles          (q01..q99, margin_at_error thresholds)
+      AUROC                    rank-based, needs global order
+      Spearman                 global ranks
+      equal-MASS ECE bins      bin edges are global quantiles of p_hat
+      top-K artifacts          hard/easy/flipped pairs
+
+  DESIGN — `eval.gather_mode: full | reduced`
+      full (DEFAULT): gather per-pair arrays to RANK 0 only (not all_gather —
+        only rank 0 computes and logs, so all_gather doubles memory for nothing).
+        Payload per pair: uid(int64) + r_w, r_l, delta, len_w, len_l (float32)
+        + slice ids (int16 x n_keys). ~40 bytes/pair.
+            5K val pairs   -> 200 KB
+            1M val pairs   -> 40 MB
+        Fine at any realistic size. Everything is exact.
+      reduced: sufficient statistics + merged histograms only. Class-(B) metrics
+        are computed from the merged histogram where possible and reported with
+        status="approximate" (§7.1), or "unavailable" where not. Top-K artifacts
+        still work: gather each rank's LOCAL top-K and re-select globally — that
+        is exact and costs almost nothing.
+
+  Class-(B)-from-histogram is genuinely approximate, and the availability engine
+  says so rather than pretending. That is exactly what the `approximate` status
+  exists for.
+
+--------------------------------------------------------------------------------
+5.7  DISTRIBUTED CORRECTNESS TRAPS  (each one is a bug we are pre-empting)
+--------------------------------------------------------------------------------
+  T1. THE PADDED-SAMPLER DOUBLE-COUNT.
+      torch's DistributedSampler pads the last partial batch BY REPEATING
+      samples so every rank sees an equal count. Gather those and the repeats
+      are counted twice. On a 4995-pair val set with 4 ranks, 1 pair is
+      duplicated — small for accuracy, but it corrupts exact counts and puts
+      duplicate entries in hard_pairs.jsonl.
+      FIX: every example carries a global `uid` (§3.1). After gathering,
+      DEDUPLICATE BY uid and assert the final count equals the true dataset
+      size. Report `n_padded_dropped` (P4).
+
+  T2. UNEVEN BATCH COUNTS DEADLOCK DDP.
+      If ranks run a different number of backward passes, the gradient
+      all-reduce hangs — no error, just a stuck job.
+      FIX: train loader uses drop_last=True (and logs how many examples that
+      drops per epoch). Eval uses the padded sampler + T1 dedup.
+
+  T3. GROUPS MUST NOT SPLIT ACROSS RANKS.
+      A K-way group split across ranks makes Best-of-N meaningless, and a pair
+      split across ranks makes the BT loss wrong (you cannot compute r_w - r_l
+      if the two halves are on different devices).
+      FIX: dataset/sampler.py shards by GROUP, never by row. Assert after
+      sharding that every local group is complete.
+
+  T4. SLICE KEYS ARE STRINGS AND DO NOT GATHER.
+      FIX: the audit freezes a str->int slice vocabulary (§3.5) and broadcasts
+      it. Ranks gather int ids; rank 0 maps back for reporting.
+
+  T5. CHECKPOINT WRITES RACE.
+      FIX: rank 0 writes; barrier before and after; every rank asserts the file
+      exists after the barrier. Save the UNWRAPPED module.
+
+  T6. RESUME WITH A DIFFERENT WORLD SIZE.
+      Optimizer state is fine, but effective_batch silently changes and the data
+      order differs.
+      FIX: the checkpoint records world_size + effective_batch; on mismatch,
+      WARN with both values and record it in run.json. Do not block — just never
+      let it be invisible.
+
+  T7. RNG DIVERGENCE.
+      Model init must be IDENTICAL across ranks; data order must DIFFER.
+      FIX: seed = base_seed for init (assert via parameter checksum all-reduce),
+      seed = base_seed + rank for data/shuffling/dropout. Both logged (§5.8).
+
+--------------------------------------------------------------------------------
+5.8  WHAT GETS LOGGED (execution block in run.json + startup console)
+--------------------------------------------------------------------------------
+      device_requested, device_resolved, how_resolved
+      device_name (torch.cuda.get_device_name / platform for cpu/mps)
+      compute_capability (cuda), is_bf16_supported
+      dtype_requested, dtype_resolved, probe_results{fp32,fp16,bf16 -> bool}
+      autocast_enabled, grad_scaler_enabled
+      fp32_pinned_components: ["head", "loss", "metrics"]        (§5.3)
+      attn_implementation
+      world_size, rank, local_rank, backend, distributed_mode
+      per_device_batch, grad_accum, effective_batch
+      seed_init, seed_data (= base + rank)
+      param_checksum (post-init all-reduce agreement check)
+      torch/transformers/python versions, platform
+  Per-step additions: grad_scale, scaler_skipped_steps, inf_check_count,
+      score_abs_mean (§5.3), peak_memory_mb per device.
+
+
+================================================================================
+6.  LOSS
+================================================================================
+
+6.1  BASE — Bradley-Terry NLL
+
+      L = -log sigma(r_w - r_l) = softplus(r_l - r_w)
+
+    Use the softplus form (stable identity, no log(0)). RL/ got this right.
+    Computed in fp32 (§5.3).
+
+    Two facts from the blog that shape the metrics:
+      - the gradient coefficient is sigma(-Delta), the model's own surprise.
+        Confidently-correct pairs contribute ~nothing; the loss is
+        self-curricularising. THIS IS WHY mean loss is a bad progress signal
+        late in training and the margin distribution (§7.3) is the real one.
+      - identifiability holds only up to a FUNCTION OF THE PROMPT c(x), not a
+        single global constant. Absolute reward level carries no information.
+
+6.2  VARIANTS (off by default; each logged when on)
+
+    (a) label_smoothing eps:
+            L = -(1-eps) log sigma(Delta) - eps log sigma(-Delta)
+        Principled when annotator noise is known: eps ~ empirical flip rate.
+        Reported annotation error rates span 5-38%, so eps in [0.05,0.15] is
+        defensible on human data; eps = 0 on synthetic.
+
+    (b) margin loss: L = -log sigma(Delta - m), m from graded strength
+        (LLaMA-2 style). Enabled only when `scores` are present in the data.
+
+    (c) centering auxiliary: + lambda * mean((r_w + r_l)^2)
+        TRL's center_rewards_coefficient, recommended 1e-2, from the
+        "Helping or Herding?" ensembles paper.
+        *** HONEST NOTE ***  This does NOT fix identifiability in the sense the
+        blog proves. The unidentifiable object is a whole function c(x); a
+        global centering penalty pins only a global constant. What it buys is a
+        stable, comparable score range across runs — AND, per §5.3, the margin
+        resolution that low-precision training depends on. Log it as that.
+
+    (d) per-prompt centering (preferred, ours):
+        subtract the within-prompt mean of scores before export. This is the
+        operation the identifiability theorem actually licenses — it removes
+        exactly the unidentifiable c(x) and nothing else. Applies to the
+        exported artifact (§8) and to reporting, not to the training loss.
+
+
+================================================================================
+7.  THE METRIC SUITE  —  CORE DELIVERABLE
+================================================================================
+
+BASELINE TO BEAT. TRL's RewardTrainer logs exactly 11 keys:
+    global_step, epoch, num_tokens, loss, accuracy,
+    min_reward, mean_reward, max_reward, margin, learning_rate, grad_norm
+That is the entire surface.
+
+--------------------------------------------------------------------------------
+7.1  *** THE AVAILABILITY ENGINE  (P5 — the generality mechanism) ***
+--------------------------------------------------------------------------------
+  Every metric is declared, not hardcoded:
+
+      MetricSpec(name="bon_acc@8", requires=[Requires.KWAY(min_k=8)],
+                 compute=fn, tier=6)
+      MetricResult(value: float|dict|None, status: str, reason: str|None)
+
+  STATUSES — the distinctions are the whole point:
+      ok            computed and trustworthy
+      approximate   computed, but from a lossy path (e.g. quantiles from merged
+                    histograms under eval.gather_mode=reduced, §5.6). Value is
+                    usable; `reason` states the approximation.
+      unavailable   a required input is absent
+                    "bon_acc@8: data is pairwise (K=2), needs K>=8"
+                    "acc_by_slice[source]: no 'source' key in dataset"
+                    "label_noise_eps: no n_annotators/agree_frac field"
+      degenerate    computable but MEANINGLESS on this data — value None, raw
+                    number preserved under `raw` for the curious
+                    "ece: separability 0.99 (synthetic regime), calibration is
+                     uninformative when classes are near-separable"
+      error         computation raised; reason carries the exception. NEVER
+                    aborts the eval — one broken metric must not kill a run.
+
+  REQUIREMENT PREDICATES (evaluated once against dataset_report):
+      PAIRWISE               always true (K>=2)
+      KWAY(min_k)            groups with K >= min_k exist; reports coverage %
+      SLICE(key)             key present with >= min_support per level
+      GOLD_SCORES            per-response gold/strength scores present
+      ANNOTATORS             n_annotators or agree_frac present
+      POLICY_SAMPLES         a policy sample set supplied (phase 3)
+      MULTI_PROMPT           >= 2 distinct prompts
+      NOT_SEPARABLE(thresh)  separability below thresh
+      EXACT_GATHER           eval.gather_mode == full (§5.6)
+
+  ALL metrics appear in metrics.jsonl every eval, including the None ones with
+  their reason. A missing key is a bug; a None with a reason is information.
+  The console prints inapplicable metrics ONCE (first eval) in a "not applicable
+  to this dataset" block, then suppresses them.
+
+--------------------------------------------------------------------------------
+7.2  ACCURACY CEILING & REGIME  (context, written into the run header)
+--------------------------------------------------------------------------------
+  Human annotator agreement on open-ended preference data typically sits at
+  60-75%; annotation error rates of 5-38% are reported. Pairwise accuracy
+  therefore has a Bayes ceiling well under 100% on human data.
+
+  `data.regime` is DECLARED, not inferred (P8):
+      human      expected_ceiling ~0.75, calibration metrics MEANINGFUL
+      synthetic  near-separable, expected_ceiling ~1.0, calibration metrics
+                 marked DEGENERATE, high accuracy is NOT evidence of quality
+  Drives §7.5 availability and the §9.5 warnings.
+
+  Rev 1-3 had the audit INFER this from measured separability. That is the
+  same mistake as format auto-detection: the user knows how their data was
+  produced, and getting it wrong silently changes which metrics we trust.
+
+  The audit still MEASURES separability and reports it. If the measurement
+  disagrees with the declaration it fires a warning:
+
+      declared regime='human' but separability is 0.99, which is the
+      synthetic range. Calibration numbers below may be meaningless.
+
+  Measure and report; never let the measurement decide.
+
+--------------------------------------------------------------------------------
+7.3  TIER 0/1 — HEADLINE + THE MARGIN DISTRIBUTION      [always available]
+--------------------------------------------------------------------------------
+  TIER 0
+    loss, accuracy = mean 1[r_w > r_l]    (STRICT inequality)
+    tie_rate       = mean 1[r_w == r_l]   *** logged separately ***
+                     counting exact ties as wrong is a silent accuracy bug
+    n_pairs        denominator, always logged beside the ratio
+
+  TIER 1 — THE MARGIN DISTRIBUTION (highest-value single addition)
+    Accuracy is only P(Delta>0); it throws away the shape, and the shape is what
+    PPO consumes — PPO sees reward DIFFERENCES divided by beta. Two models at
+    68% accuracy, one with Delta~N(+0.5,0.4) and one bimodal at +-5, produce
+    completely different PPO dynamics at the same beta.
+
+      margin_mean, margin_std
+      margin_q01 q05 q25 q50 q75 q95 q99        [EXACT_GATHER, else approximate]
+      margin_hist                               fixed bins, dumped as array
+      margin_at_error       mean |Delta| over pairs where Delta<0
+                            *** confidently-wrong mass; best label-noise and
+                            failure detector we have ***
+      cohens_d = margin_mean/margin_std         scale-free, COMPARABLE ACROSS RUNS
+      frac_margin_lt_0.1                        "undecided" mass
+      r_chosen_{mean,std,q05,q50,q95}, r_rejected_{...}
+      score_hist_chosen, score_hist_rejected
+      score_abs_mean                            (§5.3 precision guard)
+
+--------------------------------------------------------------------------------
+7.4  TIER 2 — WITHIN-PROMPT vs ACROSS-PROMPT RANKING    [needs MULTI_PROMPT]
+--------------------------------------------------------------------------------
+    acc_within_prompt   = P(r_w > r_l | same prompt)           <- standard
+    auroc_across_prompt = P(random chosen outscores random rejected,
+                            pooled across DIFFERENT prompts)
+    rank_gap            = acc_within_prompt - auroc_across_prompt
+
+  WHY BOTH. The identifiability theorem says the data carries information about
+  within-prompt differences and NOTHING ELSE — a per-prompt offset c(x) is
+  unlearnable. So acc_within is what the loss optimises and what PPO consumes
+  (PPO compares completions of the SAME prompt). auroc_across measures
+  cross-prompt comparability the data never licensed. A large positive rank_gap
+  is healthy. auroc_across ~ acc_within means prompt-level structure — usually
+  length, formatting, or topic difficulty — is doing work it has no right to do.
+  Cheap, falls straight out of the theory, and nobody logs it.
+
+--------------------------------------------------------------------------------
+7.5  TIER 3 — CALIBRATION            [needs NOT_SEPARABLE; else DEGENERATE]
+--------------------------------------------------------------------------------
+  The model asserts p_hat = sigma(Delta) = P(chosen beats rejected).
+
+  *** THE SYMMETRISATION DETAIL MOST IMPLEMENTATIONS GET WRONG ***
+  Every label in a preference set is y=1, so naive ECE over (p_hat, y=1) is
+  degenerate — it rewards confidence and never penalises it. Fix: emit BOTH
+  orientations per pair,
+        (sigma(+Delta), y=1)   and   (sigma(-Delta), y=0)
+  Now both sides of the bins are populated and ECE means something.
+
+    ece            15 equal-MASS bins (equal-width bins sit empty in the tails
+                   and flatter the score)
+    mce            max per-bin gap
+    brier          mean (p_hat - y)^2
+    nll            the BT loss restated in probability units
+    reliability_curve   (bin_center, bin_acc, bin_count) -> array dump
+
+    temperature_hat     scalar T minimising NLL of sigma(Delta/T) on VAL
+    *** T IS AN EXPORT, NOT JUST A DIAGNOSTIC ***
+    pi* ∝ pi_ref·exp(r/beta) means reward and temperature enter only as r/beta,
+    so an RM calibrated 2x hot is EXACTLY equivalent to halving beta. T folds
+    directly into the PPO leash and ships in the artifact (§8).
+    Distributed: exact without gather — the fit objective is a mean (§5.6A).
+
+--------------------------------------------------------------------------------
+7.6  TIER 4 — SHORTCUT / BIAS AUDITING                       [always available]
+--------------------------------------------------------------------------------
+  Length is the canonical shortcut: RMs routinely favour longer responses
+  irrespective of quality.
+
+    len_corr_pearson, len_corr_spearman    r vs response token count, pooled
+    p_longer_wins_model                    P(model scores longer higher)
+    p_longer_wins_data                     P(human chose longer)
+    length_bias_gap = model - data         *** REPORT THE GAP ***
+                      raw correlation is not bias; the data has genuine length
+                      signal. Only the EXCESS is bias.
+    acc_length_controlled   accuracy on pairs with |len_w-len_l|/max_len < 0.1
+                            collapse toward 50% => the RM is a length classifier
+    acc_by_dlen_bucket      accuracy vs (len_w - len_l) bucket
+    acc_len_adversarial     accuracy where the CHOSEN is the SHORTER one
+                            (hardest slice; watch this one)
+
+  Configurable regex probes (markdown, refusals, sycophancy markers, emoji, list
+  formatting): per-probe correlation with r, same gap form. Probe list is
+  project-supplied (P6), empty by default.
+
+  *** CAUTION WRITTEN INTO EVERY REPORT ***
+  Suppressing one bias axis does not remove optimisation pressure — it redirects
+  it onto correlated shortcuts. Phase 1 MEASURES and REPORTS bias; it does NOT
+  add a length penalty to the loss. Debiasing is a later, deliberate experiment
+  with the gap as its readout.
+
+--------------------------------------------------------------------------------
+7.7  TIER 5 — SLICE METRICS                     [needs SLICE(key); else None]
+--------------------------------------------------------------------------------
+  Slice keys are ARBITRARY and come from the data (dataset/schema.py `slices`).
+  The package ships no slice names — the audit discovers whatever is present and
+  freezes a str->int vocabulary for distributed gathering (§3.5, T4).
+
+  Every Tier 0/1/2 metric recomputed per slice level, plus always-derivable
+  built-in slices: response-length bucket, margin bucket.
+
+  Emitted as a console table and `slices.jsonl` (one row per slice per eval).
+  Levels below `eval.min_slice_support` (default 50) report status=unavailable
+  with the observed count, rather than a noisy number.
+
+  MOTIVATION FROM OUR OWN DATA: the rhyming set is 70% plain_answer /
+  15% too_short / 15% irrelevant_rhyme. An RM at 95% overall could be 99% on
+  plain_answer and 55% on irrelevant_rhyme — it learned "is it a poem" and
+  learned nothing about relevance. Overall accuracy structurally cannot see
+  this; the slice table sees it immediately.
+
+  TOP-LEVEL SCALARS: `worst_slice_acc`, `worst_slice_name`.
+  Model selection looks at the worst slice, not the mean (§11).
+
+--------------------------------------------------------------------------------
+7.8  TIER 6 — DOWNSTREAM PROXIES                  [availability-gated]
+--------------------------------------------------------------------------------
+  Pairwise accuracy is a weak predictor of downstream RLHF outcome.
+
+  (a) BEST-OF-N ACCURACY                       [needs KWAY(min_k=N)]
+      Given N candidates per prompt with a known best, does argmax r pick it?
+      RewardBench 2 reports Pearson 0.87 between benchmark score and downstream
+      Best-of-N — the closest cheap proxy to what we actually want.
+        bon_acc@4, bon_acc@8, bon_acc@16
+        bon_regret     gold score of picked minus gold of best [GOLD_SCORES]
+        bon_coverage   % of groups with K >= N (logged with every bon_*)
+      On pairwise-only data these report unavailable with the K they saw.
+      Distributed: groups never split (T3), so BoN is rank-local then reduced.
+
+  (b) POLICY-RM ALIGNMENT / OOD DRIFT          [needs POLICY_SAMPLES]
+      *** the reward-hacking alarm ***
+      RewardBench 2's practical finding: policy-RM misalignment (different base
+      lineage, OOD prompt distribution) degrades PPO badly even when the RM
+      benchmarks well. Same statement as the blog's "r_psi is correct only where
+      the data reached."
+        ks_stat(r_train, r_policy)
+        mean_shift = mean(r_policy) - mean(r_train)
+        frac_policy_above_train_q99      <- the hacking signature
+      A policy drifting into the RM's right tail, where no training data pinned
+      r_psi against r*, IS the reward-hacking regime. Phase 1 ships the
+      function; PPO calls it every eval in phase 2.
+
+  (c) OVEROPTIMISATION CURVE                   [phase 6, roadmap only]
+      Gao/Schulman/Hilton give the functional form of gold-vs-proxy reward
+      against optimisation pressure in sqrt(KL), coefficients scaling smoothly
+      in RM size and data. Once PPO exists, plot proxy and a held-out gold RM
+      against sqrt(KL); the turnover is the principled place to set beta.
+
+--------------------------------------------------------------------------------
+7.9  TIER 7 — TRAINING HEALTH                                [always available]
+--------------------------------------------------------------------------------
+    grad_norm_head, grad_norm_backbone, grad_norm_ratio
+                          the RATIO is the diagnostic — which part is learning.
+                          RL/ logged one global norm and could not tell.
+                          Under fp16: measured AFTER scaler.unscale_ (§5.4).
+    update_to_weight_ratio per group    ||lr*update||/||w||, healthy ~1e-3
+    param_norm per group
+    dead_head_frac        fraction of head activations identically 0
+    score_scale_drift     mean/std of raw r over training
+                          *** this is the number that becomes 1/beta ***
+    score_abs_mean        precision guard (§5.3)
+    lr, epoch, global_step, tokens_seen
+    throughput            samples/s, tokens/s, step_time p50/p95
+                          (per-rank AND aggregate under DDP)
+    peak_memory_mb        per device
+    grad_scale, scaler_skipped_steps, inf_check_count      [fp16 only]
+    nan_inf_count, skipped_batches
+    data_drop_rate        pairs filtered by max_length (P4)
+    n_padded_dropped      distributed dedup count (T1, P4)
+
+--------------------------------------------------------------------------------
+7.10 TIER 8 — ARTIFACTS (every eval, rank 0 only)
+--------------------------------------------------------------------------------
+    hard_pairs.jsonl    top-K most negative Delta with FULL text. Either label
+                        noise or genuine failure — reading 20 teaches more than
+                        any scalar. Distributed: local top-K gathered, global
+                        re-select (exact, cheap).
+    easy_pairs.jsonl    top-K most positive Delta — shortcut sanity check.
+    flipped.jsonl       pairs whose sign CHANGED since the previous eval
+                        (instability detector; nobody logs this). Keyed by uid.
+    eval_arrays.npz     uid, r_chosen, r_rejected, delta, lengths, slice ids
+                        -> every plot regenerable offline (P3)
+    reliability.json    calibration curve points
+    slices.jsonl        per-slice metric rows
+
+
+================================================================================
+8.  THE NORMALISATION ARTIFACT  (the RM -> PPO contract)
+================================================================================
+
+Fitted on validation after training, written to the checkpoint dir as
+`reward_norm.json`:
+
+    { "version": 1, "fit_split": "val", "n": ...,
+      "mean": ..., "std": ...,          # affine normalisation
+      "temperature": ...,               # from §7.5
+      "q01": ..., "q99": ...,
+      "clip_lo": ..., "clip_hi": ...,   # FROM QUANTILES, not hand-picked
+      "train_score_hist": [...],        # reference distribution for OOD alarm
+      "declared_range": [lo, hi],       # enforces I5
+      "per_prompt_centered": bool,      # §6.2(d)
+      "fit_dtype": "float32" }          # always fp32 (§5.3)
+
+PPO consumes it as:
+      r_used = clip( (r_raw - mean) / std, clip_lo, clip_hi )
+
+WHY EACH FIELD
+  mean  free to subtract — a per-prompt offset is unlearnable, so an offset
+        carries no information. The principled half of "normalise the reward".
+  std   NOT free. Scale is exactly equivalent to 1/beta. Fixing std=1 makes beta
+        mean the same thing across reward models and runs. Single most useful
+        thing the RM can hand PPO.
+  T     calibration correction; folds into beta.
+  clips derived from val quantiles so an OOD input cannot inject a +50 into the
+        reward stream. Replaces the ad-hoc ClampedReward the old project needed.
+  hist  reference distribution for the OOD / hacking alarm (§7.8b).
+
+A checkpoint WITHOUT reward_norm.json is invalid and PPO must refuse it.
+
+
+================================================================================
+9.  CONFIG & LOGGING
+================================================================================
+
+9.1  CONFIG RESOLUTION       defaults -> YAML -> CLI overrides (highest)
+     - YAML validated against the dataclass tree; UNKNOWN KEYS ARE AN ERROR
+       (naming the valid keys for that section).
+     - CLI accepts `--section.param=value` and bare `--param` when unambiguous;
+       ambiguous bare keys error and list candidate sections.
+     - Resolved config + config_hash in run.json. Every field read is registered
+       (I3); unread declared fields fail the run.
+     - Sections: {model, data, exec, train, loss, eval, log}.  `exec` is §5.
+
+9.2  RUN DIRECTORY
+     runs/<run_name>/
+        run.json            resolved config + hash + git SHA + dirty flag +
+                            EXECUTION BLOCK (§5.8) + seed(s) + DATASET
+                            FINGERPRINT (sha256 per file + row counts) +
+                            template string + regime + expected_ceiling +
+                            backbone resolution decision
+        dataset_report.json from dataset/audit.py (§3.5)
+        metrics.jsonl       one flat JSON object per event
+        slices.jsonl
+        availability.json   full metric-availability table for this run
+        eval/step_<N>/      arrays + hard pairs + reliability
+        console.log
+        checkpoints/
+     Under DDP: rank 0 writes everything. Other ranks write only
+     console.rank<N>.log for debugging.
+
+9.3  EVENT SCHEMA (metrics.jsonl)
+     Every line: {"event": <type>, "step": int, "wall": float, ...}
+     event in {train_step, eval, artifact, system, warning}
+     FLAT keys only, so `pd.read_json(lines=True)` just works.
+     Units in the key name where ambiguous: step_time_s, peak_mem_mb.
+     Non-ok metrics: {"<name>": null, "<name>__status": "...",
+                      "<name>__reason": "..."}.
+
+9.4  STREAMING ACCUMULATORS (core/stats.py)
+     Eval must not materialise everything in Python lists, and EVERY accumulator
+     must expose `merge(other)` so DDP reduction is the same code path as
+     single-device chunking (§5.6A). Welford mean/var; fixed-bin histograms;
+     exact quantiles via one sort (P^2 only above ~1e6 rows); rank-based AUROC
+     (one sort, no pairwise loop); equal-mass ECE binner.
+
+9.5  WARNINGS THAT FIRE AUTOMATICALLY  (what makes it "deep")
+     val accuracy > expected_ceiling        -> SHORTCUT SUSPECTED
+     accuracy <= baseline_acc_length_only   -> NO BETTER THAN LENGTH
+     length_bias_gap > 0.15                 -> LENGTH SHORTCUT
+     worst_slice_acc < 0.55                 -> BLIND SLICE: <name>
+     |loss(step 0) - log 2| > 0.05          -> INIT / MASKING BUG
+     tie_rate > 0.01                        -> DEGENERATE HEAD
+     ece > 0.10                             -> MISCALIBRATED, fit T
+     train_acc - val_acc > 0.15             -> OVERFIT
+     |temperature_hat - 1| > 0.3            -> SCALE MISCALIBRATION, will
+                                               silently rescale beta
+     grad_norm_ratio outside [1e-2, 1e2]    -> ONE PART NOT LEARNING
+     backbone detect != config              -> AMBIGUOUS BACKBONE
+     score_abs_mean > 20 and dtype != fp32  -> PRECISION RISK (§5.3)
+     scaler_skipped_steps / steps > 0.05    -> FP16 UNSTABLE, try bf16/fp32
+     world_size != checkpoint world_size    -> EFFECTIVE BATCH CHANGED (T6)
+     Each warning names the metric, threshold, and the §section explaining it.
+
+
+================================================================================
+10.  PSEUDOCODE
+================================================================================
+
+10.1  EXECUTION SETUP  (§5)
+    def setup_exec(cfg):
+        dist_mode = resolve_distributed(cfg)          # auto/none/ddp/fsdp
+        if dist_mode != "none":
+            dist.init_process_group(backend="nccl")
+            local_rank = int(os.environ["LOCAL_RANK"]); torch.cuda.set_device(local_rank)
+        device = resolve_device(cfg.exec.device)      # hard error if unavailable
+        probes = {dt: probe(device, dt) for dt in (fp32, fp16, bf16)}
+        dtype  = resolve_dtype(cfg.exec.dtype, device, probes, cfg.exec.strict_dtype)
+        if dtype is fp16 and device.type != "cuda":
+            hard_error("float16 training requires cuda; use float32 or bfloat16")
+        amp    = AmpPolicy(autocast=(dtype != fp32),
+                           scaler=GradScaler() if dtype is fp16 else None)
+        seed_all(cfg.seed, rank=rank())               # init same, data differs
+        log_execution_block(...)                      # §5.8
+        return ExecCtx(device, dtype, amp, dist_mode, world_size, rank)
+
+10.2  BACKBONE RESOLUTION
+    def resolve_backbone(cfg, ctx):
+        if cfg.backbone_type != "auto":
+            detected = detect(cfg.model_name)
+            if detected and detected != cfg.backbone_type:
+                warn(AMBIGUOUS_BACKBONE, config=cfg.backbone_type, detected=detected)
+            kind = cfg.backbone_type
+        else:
+            kind = detect(cfg.model_name) or hard_error(with_diagnostics)
+        bb = (REGISTRY.get(cfg.model_name) or default_adapter_for(kind)).build(cfg, ctx)
+        validate_backbone_contract(bb, kind)          # real dummy forward
+        log(backbone_resolution=dict(kind=kind, how=..., adapter=...))
+        return bb, kind
+
+10.3  SCORING   (note the fp32 boundary — §5.3)
+    def score(model, input_ids, attn_mask, prompt_len, ctx):
+        pos = scored_positions(input_ids, attn_mask, prompt_len)     # [N,T] bool
+        with autocast(ctx.device.type, ctx.dtype, enabled=ctx.amp.autocast):
+            hidden = model.backbone(input_ids, attn_mask).hidden     # [N,T,D]
+            pooled = pool(hidden, pos, mode=model.pooling)           # [N,D]
+        r = model.head(pooled.float()).squeeze(-1)     # <<< fp32 from here on
+        assert_finite(r); return r
+    # pairwise: N = 2B -> r[:B], r[B:]      K-way: N = K*B -> reshape [B,K]
+
+10.4  LOSS   (fp32)
+    def bt_loss(r_w, r_l, eps=0.0, margin=None, center_coef=0.0):
+        d = r_w - r_l
+        if margin is not None: d = d - margin
+        loss = softplus(-d).mean() if eps == 0 else \
+               ((1-eps)*softplus(-d) + eps*softplus(d)).mean()
+        if center_coef: loss = loss + center_coef * ((r_w + r_l)**2).mean()
+        return loss, d.detach()
+
+10.5  TRAIN STEP
+    def train_step(batch, model, opt, ctx, state):
+        r = score(model, *batch.stacked(), ctx)
+        r_w, r_l = batch.split(r)
+        loss, delta = bt_loss(r_w, r_l, **cfg.loss)
+        ctx.amp.backward(loss / accum)                 # scales iff fp16
+        if boundary:
+            ctx.amp.unscale_(opt)                      # BEFORE clipping (§5.4)
+            gn_h = clip_and_norm(head.params(),     cfg.max_grad_norm)
+            gn_b = clip_and_norm(backbone.params(), cfg.max_grad_norm)
+            w0 = snapshot_norms()
+            ctx.amp.step(opt); sched.step(); opt.zero_grad(set_to_none=True)
+            u2w = update_to_weight(w0, snapshot_norms())
+        return StepMetrics(loss, acc=(delta>0).mean(), gn_h, gn_b,
+                           gn_ratio=gn_h/max(gn_b,1e-12), u2w,
+                           score_abs_mean=r.abs().mean(),
+                           grad_scale=ctx.amp.scale, ...)
+
+10.6  DISTRIBUTED EVAL   (§5.6, §5.7)
+    @no_grad
+    def evaluate(model, loader, availability, ctx):
+        local = ArrayBuffer()                    # uid, r_w, r_l, delta, lens, slice ids
+        for batch in loader:
+            r = score(model, *batch.stacked(), ctx)
+            local.append(batch.uid, batch.split(r), batch.lengths, batch.slice_ids)
+
+        if ctx.world_size > 1:
+            if cfg.eval.gather_mode == "full":
+                buf = gather_to_rank0(local)             # ~40 B/pair
+                if not is_rank0(): return None
+                buf = dedup_by_uid(buf)                  # T1 — REQUIRED
+                assert len(buf) == expected_n
+            else:
+                buf = ReducedStats(all_reduce(local.sufficient_stats()),
+                                   all_reduce(local.histograms()),
+                                   gather_topk(local, K))
+        else:
+            buf = local
+
+        out = {}
+        for spec in METRIC_SPECS:                        # §7.1
+            ok, reason = availability.check(spec.requires, gather_mode)
+            if not ok:
+                out[spec.name] = MetricResult(None, "unavailable", reason); continue
+            try:
+                out[spec.name] = spec.compute(buf, availability)
+            except Exception as e:
+                out[spec.name] = MetricResult(None, "error", repr(e))   # never abort
+        dump_artifacts(buf, out); fire_warnings(out)
+        return out
+
+10.7  TEMPERATURE FIT   (§7.5 — exact under DDP with no gather)
+    def fit_temperature(delta, ctx):
+        # minimise mean softplus(-delta/T) over T>0; convex in z = 1/T.
+        def f(z):
+            local = (-delta * sigmoid(-delta * z)).sum(), delta.numel()
+            s, n = all_reduce_sum(local) if ctx.world_size > 1 else local
+            return s / n
+        return 1.0 / bisect(f, lo=1e-3, hi=1e3)
+
+10.8  MAIN
+    ctx   = setup_exec(cfg)                       # §10.1
+    fingerprint_env_and_data(cfg, ctx)            # -> run.json (incl. §5.8)
+    data  = load_and_canonicalise(cfg.data)       # any format -> PreferenceGroups
+    rep   = audit(data) if is_rank0() else None; rep = broadcast(rep)   # §3.5
+    assert rep.leakage_rate == 0
+    avail = build_availability(rep, cfg)          # §7.1 -> availability.json
+    model, kind = resolve_backbone(cfg.model, ctx)
+    assert_param_checksum_agrees_across_ranks(model)                    # T7
+    model = wrap_ddp(model, ctx) if ctx.dist else model
+    assert_dropout_state(model, cfg)              # I2
+    assert_initial_loss_is_log2(model, batch0)    # §4.3
+    for epoch in ...:
+        train_sampler.set_epoch(epoch)            # required, else same order
+        for b in train_loader: log(train_step(b, model, opt, ctx))
+        m = evaluate(model, val_loader, avail, ctx)
+        if is_rank0(): log(m); maybe_save_best(m[cfg.select_on])
+        barrier()
+    if is_rank0(): write_reward_norm(unwrap(model), val_loader)         # §8
+    assert_all_config_fields_read()               # I3
+
+
+================================================================================
+11.  MODEL SELECTION & CHECKPOINTING
+================================================================================
+    select_on: default `worst_slice_acc` when slices exist, else
+               `acc_length_controlled`, else `accuracy`.
+               Resolution automatic, logged, overridable.
+               Preferred when available: bon_acc@8 (best downstream predictor).
+    Save (rank 0, unwrapped, barrier-guarded — T5): backbone + head + tokenizer
+          + rm_config.yaml + reward_norm.json + availability.json + the eval
+          metrics that produced the selection + world_size/effective_batch (T6).
+    A checkpoint without reward_norm.json is INVALID; PPO must refuse it.
+
+
+================================================================================
+12.  RESOLVED DECISIONS
+================================================================================
+ D1. BACKBONE — fully customisable. `backbone_type: auto` detects from the HF
+     config; explicit override always wins; custom architectures register an
+     adapter. No-match is a hard error with diagnostics, never a guess. (§4.1)
+ D2. DATA — canonical form is K-way; pairwise is the K=2 case. Format and
+     column names are DECLARED in config; `fields` defaults to the canonical
+     names so it is written only where the file disagrees. (§3.1-3.2, P8)
+ D3. LAYOUT — `dataset/` and `reward_model/` are siblings under the package;
+     `core/` holds what PPO/DPO/GRPO share; projects live outside. (§2)
+ D4. GENERALITY — pip-package shape from day 1; inapplicable metrics report None
+     with a status and a reason, never a crash or a fabricated number. (§7.1)
+ D5. CONFIG — YAML plus CLI overrides, both first-class. (§9.1)
+ D6. DEVICES — {cpu, cuda, mps}, resolved with a runtime probe; explicit request
+     for an unavailable device is a hard error, never a silent cpu fallback.(§5.1)
+ D7. PRECISION — {float32, float16, bfloat16}. Head + loss + metrics ALWAYS
+     fp32 regardless (§5.3, quantified). fp16 requires cuda + GradScaler; bf16
+     needs no scaler; auto never picks fp16.
+ D8. MULTI-GPU — DDP on cuda via torchrun, FSDP later behind the same
+     interface. Group-aware sharding, uid-based dedup after gather, exact
+     distributed temperature fit. (§5.5-5.7)
+
+ STILL OPEN
+ Q1. Which dataset for the first real run once plumbing works? (rhyming is
+     near-separable and will mark all calibration metrics DEGENERATE — good for
+     exercising the availability engine, useless for validating calibration.)
+ Q2. FSDP timing — phase 2, or only when a backbone actually stops fitting?
+
+
+================================================================================
+13.  PHASE ROADMAP
+================================================================================
+    P1  core/ (contracts, masking, device, determinism, stats, config) +
+        dataset/ (schema, formats, loaders, tokenize, sampler, audit) +
+        reward_model/ (backbone resolution, head, BT loss, trainer) +
+        Tier 0/1/7 metrics + availability engine skeleton
+        — single-device first; DDP paths stubbed but interfaces reduction-ready
+    P2  evaluator: Tier 2/3/4/5 + artifacts + warnings + reward_norm.json
+        + turn on DDP and validate against single-device numbers (§13.1)
+    P3  Best-of-N + policy-RM drift hooks (consumed by PPO)
+    P4  PPO per the notes (GAE, clip, k3 KL-to-ref, entropy) — reuses core/
+    P5  DPO, GRPO
+    P6  Overoptimisation curve (proxy vs gold vs sqrt-KL) to set beta
+    P7  packaging: entry points, versioned artifact schemas, docs
+
+ 13.1  THE DDP ACCEPTANCE TEST (do not skip)
+    Same seed, same data, world_size=1 vs world_size=2 with per_device_batch
+    halved -> eval metrics must agree to within fp32 tolerance, and n_pairs must
+    match EXACTLY. Any mismatch in n_pairs is T1 (padded double-count). This one
+    test catches most distributed metric bugs, and it is cheap to run every time
+    the eval path changes.
+
+
+================================================================================
+14.  REFERENCES
+================================================================================
+    RewardBench 2: Advancing Reward Model Evaluation
+        https://arxiv.org/abs/2506.01937
+        (BoN correlation 0.87; policy-RM misalignment degrades PPO)
+    Scaling Laws for Reward Model Overoptimization — Gao, Schulman, Hilton
+        https://arxiv.org/abs/2210.10760
+    Reward Model Ensembles Help Mitigate Overoptimization
+        https://arxiv.org/abs/2310.02743
+    Helping or Herding? Reward Model Ensembles Mitigate but do not Eliminate
+        Reward Hacking   (source of the centering aux loss)
+        https://arxiv.org/abs/2312.09244
+    Bias Fitting to Mitigate Length Bias of Reward Model in RLHF
+        https://arxiv.org/abs/2505.12843
+    Reward Bias Substitution: Single-Axis Bias Mitigations Redirect
+        Optimization Pressure
+        https://arxiv.org/html/2605.27996v1
+    Taming Overconfidence in LLMs: Reward Calibration in RLHF
+        https://arxiv.org/pdf/2410.09724
+    TRL RewardTrainer (the logging baseline we are beating)
+        https://huggingface.co/docs/trl/en/reward_trainer
+    Bradley & Terry (1952), Rank Analysis of Incomplete Block Designs
+        https://www.jstor.org/stable/2334029
+================================================================================
