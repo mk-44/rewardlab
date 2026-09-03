@@ -1,0 +1,21 @@
+{
+  "requested_device": "mps",
+  "requested_dtype": "float32",
+  "device": "mps",
+  "dtype": "float32",
+  "amp": {
+    "autocast": false,
+    "autocast_dtype": null,
+    "grad_scaler": false
+  },
+  "grad_scaler_available": true,
+  "dist": {
+    "is_dist": false,
+    "rank": 0,
+    "local_rank": 0,
+    "world_size": 1
+  },
+  "seed": 0,
+  "deterministic": false,
+  "is_main": true
+}

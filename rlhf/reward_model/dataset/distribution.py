@@ -9,8 +9,8 @@ from typing import Literal, Sequence, Optional, Callable, Iterable
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
-from rlhf.dataset.audit import SURFACE_PROBES, TRIVIAL_BASELINES
-from rlhf.dataset.schema import PairView, groups_to_pairs
+from rlhf.reward_model.dataset.audit import SURFACE_PROBES, TRIVIAL_BASELINES
+from rlhf.reward_model.dataset.schema import PairView, groups_to_pairs
 from scipy.optimize import minimize
 
 Status = Literal["ok", "approximate", "unavailable", "not_applicable", "degenerate", "error"]

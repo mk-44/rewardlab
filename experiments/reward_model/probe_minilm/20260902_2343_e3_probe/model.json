@@ -1,0 +1,16 @@
+{
+  "backbone": {
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "custom": false,
+    "pooling": "mean",
+    "hidden_size": 384,
+    "n_params": 22713216,
+    "n_trainable": 0,
+    "frozen": true,
+    "gradient_checkpointing": false
+  },
+  "head_hidden_size": 384,
+  "head_bias": false,
+  "n_params": 22713600,
+  "n_trainable": 384
+}

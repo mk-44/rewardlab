@@ -1,0 +1,49 @@
+{
+  "shared_space": true,
+  "audit_source": "preference_data/train.jsonl",
+  "profile_source": "preference_data/train.jsonl",
+  "rows": [
+    {
+      "question": "how easy is this task",
+      "predicted": "best baseline 0.998 (lexical_nb); separability 0.989",
+      "observed": "val acc 0.9873 (se 0.0014), best at step 3500 of 4095",
+      "verdict": "model BELOW surface ceiling \u2014 investigate"
+    },
+    {
+      "question": "length shortcut",
+      "predicted": "char_length baseline 0.946; P(longer wins) 0.943; near-equal pairs 0.107",
+      "observed": "worst length-matched slice: match_word_count acc 0.9544 (n=526, se 0.0091)",
+      "verdict": "DROPS on length-controlled slice \u2014 length shortcut in use"
+    },
+    {
+      "question": "surface-reader or not",
+      "predicted": "frac_surface_controlled 0.004; separability_min 0.981 (probe worst slice)",
+      "observed": "model worst slice: match_word_count acc 0.9544 (n=526)",
+      "verdict": "read the slice table"
+    },
+    {
+      "question": "did it learn the PC1 axis",
+      "predicted": "Tier-1 PC1 explains 0.054 of delta var (the rejection-strategy axis)",
+      "observed": "cos(w, PC1) +0.735, cos(w, mean delta) +0.825, own-space PC1 frac 0.06",
+      "verdict": "DIRECT comparison \u2014 spaces verified identical (model==instrument): cos(w, Tier-1 artifact axis) as stated"
+    },
+    {
+      "question": "margin inflation on separable data",
+      "predicted": "predicted: margins/|r| grow after accuracy saturates (step-13 demo)",
+      "observed": "abs_reward_max 5.89 -> 10.32 across the run; best checkpoint (step 3500) predates most inflation",
+      "verdict": "CONFIRMED"
+    },
+    {
+      "question": "honest evaluation",
+      "predicted": "re-split: prompt overlap 0.0%, shift real",
+      "observed": "eval on 6289 out-of-sample-prompt pairs",
+      "verdict": "every number above is leakage-free"
+    },
+    {
+      "question": "run facts",
+      "predicted": "budget: 4095 steps",
+      "observed": "early_stopped=False at step 4095, wall 179s",
+      "verdict": "ran full budget"
+    }
+  ]
+}

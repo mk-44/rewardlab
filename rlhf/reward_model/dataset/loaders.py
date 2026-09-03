@@ -7,9 +7,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence, Union
-from rlhf.core.contracts import ConfigError, DataError
-from rlhf.dataset.formats import FieldMap, RecordFormat, record_to_group, validate_columns
-from rlhf.dataset.schema import PreferenceGroup
+from rlhf.reward_model.core.contracts import ConfigError, DataError
+from rlhf.reward_model.dataset.formats import FieldMap, RecordFormat, record_to_group, validate_columns
+from rlhf.reward_model.dataset.schema import PreferenceGroup
 
 Source = Union[str, Path, Sequence[dict], Any]
 

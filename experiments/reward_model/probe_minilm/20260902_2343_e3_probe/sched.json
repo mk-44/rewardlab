@@ -1,0 +1,5 @@
+{
+  "kind": "cosine",
+  "warmup_steps": 50,
+  "total_steps": 4095
+}

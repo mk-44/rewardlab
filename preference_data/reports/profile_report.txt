@@ -1,0 +1,76 @@
+============================================================================
+DATASET PROFILE   (tier 1: embeddings)
+============================================================================
+  source          : preference_data/train.jsonl
+  pairs           : 2,000   (sampled from 43,659)
+
+---- EMBEDDINGS  [ok] ------------------------------------------------------
+  hf : sentence-transformers/all-MiniLM-L6-v2   dim 384
+  texts 6,000   unique cached 16,484     hits 3,072/6,000   embedded 2,890
+  mean_norm 5.086   effective_rank 57.6
+
+---- SEPARABILITY  [ok] ----------------------------------------------------
+  slice                         pairs     acc     auc     drop
+  raw                           2,000   0.989   0.996        -
+  match_unique_word_ratio       1,557   0.981   0.996   +0.008
+  match_has_comma                 606   0.983   0.999   +0.006
+  match_exclamation             1,889   0.983   0.998   +0.005
+  match_avg_word_length           772   0.987   0.998   +0.002
+  match_ends_with_period        1,850   0.989   1.000   -0.000
+  match_question_mark           1,948   0.992   0.996   -0.003
+  match_hedging                 1,980   0.992   0.999   -0.004
+
+  >> frac_surface_controlled = 0.004   (7 pairs where no surface feature differs)
+  >> separability_raw = 0.989
+  >> separability_min = 0.981   <-- IMAANDAAR NUMBER
+     top confound    = match_unique_word_ratio (+0.008)
+
+---- DELTA DIRECTION  [ok] -------------------------------------------------
+  mean_pairwise_cosine  0.041
+  frac_aligned_w_mean   0.970
+  pc explained var      [0.054, 0.045, 0.02]
+  effective_dim         94.5   (unit arrows 101.7)
+  delta norm            q05 3.52   q50 5.12   q95 6.39
+
+  PC1 ke dono sire  (yahi axis model seekhega)
+    + chosen   'A smooth stone glimmers like a polished dream,\nIts gentle cu'
+      rejected 'A cat sat on a mat, feeling quite fat,\nWhile the dog chased '
+    + chosen   'With silk spun threads, the message would glide,\nA web of wh'
+      rejected 'A spider does not send text messages.'
+    - chosen   "If pets could cast their votes today,\nWe'd see a world where"
+      rejected 'The flowers bloom in the sunny glade,\nWhile shadows dance in'
+    - chosen   "The next prime after five is seven, you see,\nIt's a number t"
+      rejected 'In the garden, flowers bloom and sway,\nButterflies dance in '
+
+---- GROUNDING  [ok] -------------------------------------------------------
+  cos(prompt, chosen)   0.469
+  cos(prompt, rejected) 0.583
+  relevance_gap         -0.115
+  rejected off topic    17.4%
+
+---- DISTRIBUTION SHIFT  [ok] ----------------------------------------------
+  prompt overlap  0.0%
+  prompt      mmd2 0.00507   p 0.005   [ok]
+  chosen      mmd2 0.00243   p 0.005   [ok]
+  rejected    mmd2 0.00238   p 0.005   [ok]
+
+---- NEAR DUPLICATES  [ok]  tau=0.95 ---------------------------------------
+  within train    5   rate 0.0000
+  within val      0
+  cross split     3   max cos 0.984
+  nn cosine       q50 0.590   q95 0.867
+  compared        828
+
+---- DIVERSITY  [ok] -------------------------------------------------------
+  vendi prompt    125.2   of 2,000 rows
+  vendi chosen    102.6
+  vendi rejected  139.7
+  eff sample rate 0.0626
+  frac isolated   0.219
+
+---- WARNINGS --------------------------------------------------------------
+  !  SURFACE DIFFERS BY CONSTRUCTION  frac_surface_controlled=0.004 < 0.05. Chosen and rejected almost never share a format, so no slice can separate content from format.
+  !  EVEN THE SHORTCUT FREE SLICE IS EASY  separability_min=0.981 > 0.75. The task stays trivial after every confound is controlled.
+  !  SEMANTIC LEAKAGE  3 cross split near duplicate pairs at cosine > 0.95. Exact match checks miss these.
+
+============================================================================

@@ -1,0 +1,61 @@
+============================================================================
+DATASET AUDIT   (tier 0: no model, no embeddings)
+============================================================================
+  source          : preference_data/train.jsonl
+  groups          : 43,659      pairs : 43,659
+  unique prompts  : 925      K : {2: 43659}
+
+---- STRUCTURE -------------------------------------------------------------
+  exact duplicates              72   <-- look
+  identical sides                0
+  all tied (no signal)           0
+  empty responses                0
+  train val leakage              0
+  slice keys                  none
+
+---- HOW EASY IS THIS ------------------------------------------------------
+  a model that only knows ...            pairwise acc
+    lexical_nb                           0.998  <-- best
+    char_length                          0.946
+    newline_count                        0.926
+    punctuation                          0.924
+    word_count                           0.880
+    avg_word_length                      0.523
+    unique_word_ratio                    0.402
+
+  >> baseline_acc_best = 0.998  (lexical_nb, normal)     [expected_ceiling 0.75]
+     A reward model scoring below this has learned nothing.
+
+  lexical probe [ok]: 34,927 train / 8,732 test pairs, vocab 9,516
+  Naive Bayes is a weak model so this is a LOWER BOUND. A high value is decisive. A low value proves nothing.
+
+---- WHAT GIVES IT AWAY ----------------------------------------------------
+  predicts CHOSEN   : 'ignite'  'kindness'  'spirit'  'collide'  'swirl'  "i'd"  'nineteen'  'soul'  "you'll"  'courage'  'challenge'  'worries'
+  predicts REJECTED : 'rat'  'likely'  'fat'  'located'  'practicing'  'mat'  'due'  'typically'  'involves'  'popular'  'sat'  'includes'
+
+---- LENGTH ----------------------------------------------------------------
+  chosen   chars  q05 76   median 91   q95 107
+  rejected chars  q05 17   median 54   q95 91
+  P(chosen is longer)   0.943
+  near equal length     0.107   <- the length controlled eval slice
+
+---- SURFACE ASYMMETRY   (top 8 by gap) ------------------------------------
+  feature                chosen  rejected      gap
+  has_newline             1.000     0.148   +0.852
+  multi_line              1.000     0.148   +0.852
+  has_comma               0.993     0.294   +0.699
+  ends_with_period        0.930     0.982   -0.052
+  exclamation             0.058     0.007   +0.051
+  question_mark           0.026     0.009   +0.017
+  hedging                 0.000     0.010   -0.010
+  emoji                   0.001     0.000   +0.001
+
+---- WARNINGS --------------------------------------------------------------
+  !  REGIME MISMATCH  a trivial baseline (lexical_nb=0.998) already exceeds expected_ceiling=0.75. Human annotated data is not this separable, so either the declared regime is wrong or a shortcut is doing the work.
+  !  TASK IS LEXICALLY TRIVIAL  lexical_sep_acc=0.998 > 0.90. Bag of words alone nearly solves it.
+  !  A TRIVIAL MODEL ALREADY WINS  lexical_nb=0.998 > 0.80. Any reward model must clearly beat this to mean anything.
+  !  LENGTH IMBALANCE  p_longer_wins=0.943. Chosen and rejected differ systematically in length.
+  !  STRONG SURFACE SHORTCUT  has_newline gap=+0.852 (chosen 1.00 vs rejected 0.15).
+  !  NO SLICE KEYS  per slice metrics will report unavailable. Save a category field per row to enable them.
+
+============================================================================

@@ -6,11 +6,11 @@
 #     python3 -m venv .venv
 #     source .venv/bin/activate          # Windows: .venv\Scripts\activate
 #     pip install --upgrade pip
-#     pip install -r rlhf/requirements.txt
+#     pip install -r requirements.txt
 #
 # Verify:
 #     python -c "import torch; print(torch.__version__, torch.backends.mps.is_available())"
-#     python rlhf/rough_work/step_1.py
+#     python -m rlhf --help
 #
 # ------------------------------------------------------------------------------
 # NOTE (Apple Silicon / MPS): plain `pip install torch` deta hai MPS-enabled
@@ -92,6 +92,7 @@ pytest-cov>=5.0.0
 # Base install jaan-boojh ke halka rakha hai. RunLogger inke bina bhi
 # pura kaam karega (jsonl + console); yeh sirf extra sinks hain.
 #
+# openai>=1.0.0            # sirf agar profile.embed.backend == "openai" (Tier 1 embeddings via API)
 # wandb>=0.17.0            # experiment tracking sink
 # tensorboard>=2.16.0      # alternate sink
 # matplotlib>=3.8.0        # offline plots eval_arrays.npz se (plan P3)

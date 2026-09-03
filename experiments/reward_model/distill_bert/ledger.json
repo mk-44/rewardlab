@@ -1,0 +1,49 @@
+{
+  "shared_space": false,
+  "audit_source": "preference_data/train.jsonl",
+  "profile_source": "preference_data/train.jsonl",
+  "rows": [
+    {
+      "question": "how easy is this task",
+      "predicted": "best baseline 0.998 (lexical_nb); separability 0.989",
+      "observed": "val acc 0.9997 (se 0.0002), best at step 1000 of 3000",
+      "verdict": "CONFIRMED \u2014 at the surface ceiling almost immediately"
+    },
+    {
+      "question": "length shortcut",
+      "predicted": "char_length baseline 0.946; P(longer wins) 0.943; near-equal pairs 0.107",
+      "observed": "worst length-matched slice: match_char_length acc 0.9987 (n=745, se 0.0013)",
+      "verdict": "survives length control \u2014 NOT length-dependent"
+    },
+    {
+      "question": "surface-reader or not",
+      "predicted": "frac_surface_controlled 0.004; separability_min 0.981 (probe worst slice)",
+      "observed": "model worst slice: match_newline_count acc 0.9979 (n=937)",
+      "verdict": "holds on every matched slice \u2014 beyond any single surface feature"
+    },
+    {
+      "question": "did it learn the PC1 axis",
+      "predicted": "Tier-1 PC1 explains 0.054 of delta var (the rejection-strategy axis)",
+      "observed": "cos(w, PC1) +0.923, cos(w, mean delta) +0.924, own-space PC1 frac 0.89",
+      "verdict": "own-space numbers only \u2014 spaces DIFFER, not comparable to Tier-1 axes (step-20 F1)"
+    },
+    {
+      "question": "margin inflation on separable data",
+      "predicted": "predicted: margins/|r| grow after accuracy saturates (step-13 demo)",
+      "observed": "abs_reward_max 7.69 -> 9.15 across the run; best checkpoint (step 1000) predates most inflation",
+      "verdict": "CONFIRMED"
+    },
+    {
+      "question": "honest evaluation",
+      "predicted": "re-split: prompt overlap 0.0%, shift real",
+      "observed": "eval on 6289 out-of-sample-prompt pairs",
+      "verdict": "every number above is leakage-free"
+    },
+    {
+      "question": "run facts",
+      "predicted": "budget: 5458 steps",
+      "observed": "early_stopped=True at step 3000, wall 942s",
+      "verdict": "early stop reclaimed the saturated tail"
+    }
+  ]
+}

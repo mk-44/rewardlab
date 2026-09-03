@@ -78,8 +78,8 @@ THE FAILURE THIS PREVENTS
 2.  TWO FILES
 ================================================================================
 
-    rlhf/dataset/audit.py          TIER 0. no new deps. seconds. always runs.
-    rlhf/dataset/distribution.py   TIER 1-2. needs embeddings. opt-in.
+    rlhf/reward_model/dataset/audit.py          TIER 0. no new deps. seconds. always runs.
+    rlhf/reward_model/dataset/distribution.py   TIER 1-2. needs embeddings. opt-in.
 
     CLI:
         rlhf audit <config>          -> dataset_report.json   (tier 0)

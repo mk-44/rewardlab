@@ -1,0 +1,617 @@
+RLHF BUILD — Q&A LOG
+Running log of concept Q&As from the build chats. Append new ones at the bottom
+of their section (or add a section). Keep the anchor numbers from demos.
+
+================================================================================
+1. FLOATING POINT & MIXED PRECISION
+================================================================================
+
+Q: What is a float, exactly? What are E, M, bias?
+A: [sign | E exponent bits | M mantissa bits]; value = (-1)^s * 1.m * 2^(exp-bias),
+   bias = 2^(E-1) - 1. E buys RANGE, M buys PRECISION.
+   fp32: E=8 M=23 | fp16: E=5 M=10 | bf16: E=8 M=7 (fp32's range, worst precision).
+
+Q: What is ULP?
+A: Gap between consecutive representable floats at a given magnitude,
+   ulp ~ 2^(k-M) for |x| ~ 2^k. The grid is geometric: dense near 0, coarse far out.
+   bf16 at |x|~100: ulp = 0.5. fp16 at 1.0: ulp = 9.77e-4. bf16 at 1.0: 7.8e-3.
+
+Q: Why is the reward head pinned fp32?
+A: Rewards reach |r|~100 where bf16's ulp is 0.5 — BT margins r_w - r_l below that
+   quantize to garbage. Head compute is tiny, so fp32 there costs nothing.
+
+Q: What does GradScaler do, and why only for fp16?
+A: fp16's floor (smallest normal 6.1e-5, subnormals to 6e-8) underflows small grads
+   to 0. Scaler multiplies the LOSS (~2^16) so grads ride up into range; unscales in
+   fp32 before the step; skips the step on inf/nan and shrinks the scale.
+   bf16 has fp32's exponent -> no underflow problem -> no scaler.
+
+Q: Why keep BOTH an fp16 copy and an fp32 master? Why not one dtype?
+A: fp16 copy = speed (tensor cores, half bandwidth + activation memory).
+   fp32 master = update accumulation. fp16-only fails by SWALLOWING:
+   update 4e-4 < ulp(1.0) = 9.77e-4 -> w + update == w, literally.
+   Demo: 400 steps toward 2.0 — fp16-only weight stuck at 1.0000, master at 1.1479.
+   Swallowing != underflow:
+     underflow  = ABSOLUTE failure (exponent floor, value too small to exist)
+                  -> cured by GradScaler, where small values FLOW (grads)
+     swallowing = RELATIVE failure (mantissa grid, small vs what it's added to)
+                  -> cured by fp32 master, where small values ACCUMULATE (updates)
+   bf16 drops the scaler but keeps the master (its mantissa is even stubbier).
+
+Q: Under fp16 autocast, does the reward-margin issue disappear (fp16 finer than bf16)?
+A: No — 8x smaller, not gone. ulp at |r|~100 = 2^(6-M): fp16 0.0625, bf16 0.5,
+   fp32 7.6e-6. Measured: margin 0.1 -> bf16 0.0 (dead), fp16 0.125 (alive but
+   25% distorted); margin 0.03 -> BOTH 16-bit formats swallow it. The fp32 head
+   pin is dtype-POLICY-AGNOSTIC (autocast disabled unconditionally), because
+   trained RMs produce near-tie pairs inside the fp16-killable band too.
+   fp16 also adds a RANGE disease bf16 lacks: max normal 65504 (r=70000 -> inf)
+   and exp(30) = inf inside naive sigmoid/softplus -> losses compute in fp32
+   with the stable softplus(r_l - r_w) form.
+
+Q: Exact per-step timeline of mixed-precision training?
+A: 1) forward, fp16 weights + fp16 compute
+   2) loss x scale                      (fp16 case only)
+   3) backward, fp16 compute -> fp16 grads
+      (uses the SAME forward-time weights; no updates mid-backward — the chain
+       rule propagates through the exact W that made the activations)
+   4) unscale grads in fp32, skip if inf/nan, master <- master - lr*g
+   5) re-round master -> fresh fp16 copy (every parameter, wholesale)
+   6) next forward sees updated fp16 weights.
+   Our repo: autocast path — weights stay fp32, per-op transient casts; same idea,
+   no stored fp16 copy (DeepSpeed/Apex materialize it).
+
+================================================================================
+2. DDP
+================================================================================
+
+Q: What actually happens in DDP?
+A: Replicate weights on every rank, shard the BATCH. Each rank runs
+   forward+backward on its micro-batch -> local grads differ. One ring all_reduce
+   averages them (internally reduce-scatter + all-gather; chunked, leaderless —
+   is_main gates I/O only, never collectives). Every rank applies the same
+   averaged grad to its own copy -> replicas stay bit-identical forever.
+
+Q: Why share grads and not weights?
+A: (1) Overlap: grads are born layer-by-layer in backward; DDP buckets (~25 MB)
+   and all_reduces finished buckets WHILE backward continues. Weights are ready
+   only after step; the next forward blocks on them — nothing to hide under.
+   (2) Correctness: weight-averaging is a DIFFERENT algorithm under Adam.
+   Demo (g0=0, g1=2): grad-avg step moves 0.100; step-locally-then-average-weights
+   moves 0.050, and optimizer states diverge permanently (rank0 m=0, rank1 m=0.2).
+   Adam is nonlinear in g (v holds g^2, divide by sqrt(v)):
+   mean-of-nonlinear != nonlinear-of-mean.
+   Vanilla SGD: both paths coincide (linearity) — why the intuition misleads.
+
+Q: seed vs deterministic?
+A: seed fixes WHICH random numbers are drawn (init, shuffle, dropout).
+   deterministic fixes HOW kernels compute (reproducible implementations, no
+   atomics-order races), at a speed cost. Same seed + nondeterministic kernels
+   can still diverge run-to-run.
+
+================================================================================
+3. ZERO / MEMORY
+================================================================================
+
+Q: Where do 16 bytes/param go (Adam, mixed precision)?
+A: fp16 w 2 + fp16 g 2 + fp32 master 4 + Adam m 4 + Adam v 4 = 16 B/param.
+   7B -> 112 GB before activations. Stages shard cumulatively:
+   Z1 optimizer states (the 12) | Z2 + grads | Z3 + weights.
+   Per-rank B/param: DDP 16 | Z1 4+12/N | Z2 2+14/N | Z3 16/N (+ one layer transient).
+
+Q: ZeRO-1 mechanics — and why it is EXACT, not approximate?
+A: Key: Adam is ELEMENTWISE — w[i]'s update needs only g[i], m[i], v[i], master[i].
+   A 7B-param step = 7B independent scalar problems -> deal them out like cards.
+   Steps: 1) backward, full local grads (as DDP)
+          2) reduce-scatter -> rank k holds the SUMMED gbar for its chunk only
+             (averaged grad exists exactly once, in pieces, on the owners)
+          3) each rank Adam-updates ITS chunk (its master/m/v live only there)
+          4) all-gather updated fp16 shards -> everyone holds full weights
+          5) next forward — identical replicas, like DDP never left.
+   Comms = DDP exactly: allreduce == reduce-scatter + all-gather; Z1 slips the
+   optimizer step between the two halves. Sim: max|DDP - ZeRO1| = 0.0 at 50 steps.
+   The all-gather CONCATENATES one-owner-per-element results — it never AVERAGES
+   disagreeing copies (that was the rejected wt-avg design). Averaging happens at
+   the grad stage, the linear place, same as DDP.
+   Gotchas: ownership is permanent (m/v are that shard's history) -> sharded
+   checkpoints + consolidation scripts; global grad-norm clipping needs one tiny
+   scalar allreduce (the norm couples elements — exception proving the rule).
+
+Q: ZeRO-2's trick vs ZeRO-1?
+A: Z1 RECEIVES grads per-chunk but STORES the full local grad buffer (backward
+   materializes it all; peak 2 B/param full — hence "4 + 12/N").
+   Z2: reduce-scatter EACH BUCKET the moment backward produces it; owner keeps the
+   summed chunk, everyone else FREES the bucket instantly. Full buffer never
+   exists. Peak grads: own share + one in-flight bucket
+   (7B, N=8: 14 GB -> 1.75 GB + ~bucket). Same wire bytes, same end state
+   (verified identical), and reductions overlap backward (the DDP property back).
+   One line: a grad's useful life on a non-owner is birth-to-reduction — Z1 makes
+   them wait for a group funeral; Z2 buries each as its reduction lands.
+   Caveat: naive grad accumulation conflicts (non-owned local grads are gone;
+   accumulate into the reduced owned chunks instead — DeepSpeed handles it).
+
+Q: ZeRO-3 — how is it different from "ZeRO-1 + ZeRO-2 combined"?
+A: "1+2 combined" IS ZeRO-2 (stages are cumulative). Z3 adds a NEW mechanism:
+   shard the weights' PRESENCE. Z1/Z2 shard state consumed OUTSIDE compute (step
+   boundary, reduction endpoint) — forward/backward untouched. Z3 shards what
+   compute itself consumes -> communication moves INSIDE forward/backward.
+   Rest state: each rank holds 1/N OF EVERY LAYER (never "its layers" — the even
+   split keeps every gather balanced; layer-wise ownership = lopsided broadcasts).
+   Per-layer rhythm: GATHER (all-gather the layer) -> COMPUTE (each rank, OWN
+   batch) -> EVICT the borrowed part. Backward re-gathers each layer AGAIN
+   (chain rule needs forward-time W, which was evicted).
+   Step: update own shard; NO post-step all-gather — sharded IS the resting
+   state; next forward's gathers pick up the new values lazily.
+   Costs: bytes 1.5x DDP unconditionally (fwd gathers P + bwd gathers P + grad
+   reduce-scatter P = 3P vs 2P). TIME is conditional: prefetch hides gather(l+1)
+   under compute(l); hiding ratio ~ tokens per micro-batch (compute B*L*H^2 vs
+   transfer H^2) and interconnect speed. ~3L sync points/step -> jitter
+   amplification; wants NVLink; no rank holds a full model (checkpointing and
+   fault tolerance become collective).
+   Mental model: the ILLUSION of full replication — virtual memory for weights.
+   Rents the model one layer at a time instead of owning a copy: pays bandwidth
+   (hideable) to stop paying memory (unhideable). FSDP = this exact algorithm
+   (gather unit = the wrapped module; wrapping choice sets peak mem + gather count).
+
+Q: Doesn't ZeRO-3 make ranks depend on each other? Isn't that a problem?
+A: Yes they depend — but characterize it: symmetric, lockstep handshakes between
+   peers doing mirror-image work, not waiting on a busy stranger. DDP already has
+   a per-step barrier (allreduce); Z3 refines it to per-layer. Prefetch makes it
+   latency-free when interconnect keeps up. Real bites: one rank's hiccup stalls
+   all at the next gather (3L times/step), and the model exists only jointly.
+
+Q: Is ZeRO-3 "model sharding" / model parallelism?
+A: Sharded STORAGE: yes. Divided COMPUTE: no — every rank runs the whole net on
+   its own batch, so it is DATA parallelism. FSDP's name answers it exactly:
+   Fully Sharded (storage) Data Parallel (algorithm).
+   Taxonomy — three independent axes (DeepSpeed composes all three, "3D"):
+     data parallel     splits the BATCH    wire: grads (+weight gathers for Z3)
+     tensor parallel   splits each MATRIX  wire: activations inside every layer
+     pipeline parallel splits the DEPTH    wire: activations at stage boundaries
+   Litmus: what crosses the wire during forward? weights -> Z3; activations -> TP/PP.
+   Or: does each rank get its own slice of the batch and run the whole net on it?
+
+================================================================================
+3b. ZERO / DEEPSPEED / FSDP — THE FULL DISCUSSION (dry runs)
+================================================================================
+
+Everything below uses ONE shared toy:
+  8 params flat: w = [1 2 3 4 5 6 7 8], 2 ranks, lr = 0.1, Adam fresh (m=v=0).
+  Flat chunk ownership (Z1/Z2): rank0 owns [0:4], rank1 owns [4:8].
+  Each rank backwards its OWN micro-batch, so local grads differ:
+    rank0: g0   = [0.2  0.4  0.6  0.8 | 1.0  1.2  1.4  1.6]
+    rank1: g1   = [0.6 -0.4  0.2  0.4 | 0.0  0.8  0.6  0.4]
+    mean:  gbar = [0.4  0.0  0.4  0.6 | 0.5  1.0  1.0  1.0]
+  Handy fact: the first Adam step ~ lr*sign(gbar) (bias correction at t=1),
+  so nonzero-grad elements move by ~0.1 and zero-grad elements don't move.
+
+---- ZERO-1: THE DRY RUN ------------------------------------------------------
+
+What each rank stores:
+                 rank 0                          rank 1
+  always         w[0..7] fp16 (FULL)             w[0..7] fp16 (FULL)
+  owns (fp32)    master/m/v for [0:4] only       master/m/v for [4:8] only
+
+The key that makes sharding legal: ADAM IS ELEMENTWISE. Updating w[3] needs
+exactly g[3], m[3], v[3], master[3] — no sums across the vector, no coupling.
+One "optimizer step" for 7B params = 7B independent scalar problems, and
+independent problems can be dealt out like cards. ZeRO-1 doesn't parallelize
+the step — it PARTITIONS it, because it was never coupled in the first place.
+
+Step 1  backward (exactly DDP): each rank holds its full local g (above).
+Step 2  reduce-scatter: the two halves of allreduce, stopped after the first.
+        rank0 sends its g0[4:8] chunk, rank1 sends its g1[0:4] chunk; each
+        adds what arrives to what it kept (and /2):
+          rank0 now holds gbar[0:4] = [0.4 0.0 0.4 0.6]  and NOTHING of [4:8]
+          rank1 now holds gbar[4:8] = [0.5 1.0 1.0 1.0]  and nothing of [0:4]
+        Burn this in: after reduce-scatter the averaged grad exists exactly
+        ONCE, in pieces, each piece on its owner. Nobody holds all of gbar —
+        and nobody needs to (elementwise key).
+Step 3  local update, zero communication. Each rank runs Adam on its 4
+        scalars with the master/m/v it alone stores:
+          rank0 new shard: [0.9 2.0 2.9 3.9]   rank1 new shard: [4.9 5.9 6.9 7.9]
+        Note element 1: its averaged grad is 0.0 -> it does NOT move (stays
+        2.0). Its fate was decided entirely by its own four numbers, while
+        rank1 was updating element 5 on another card. The full step happened
+        exactly once per element — just geographically split. Persisted on
+        rank0 only: m[0:4] = [0.04 0 0.04 0.06], v[0:4], master[0:4].
+Step 4  all-gather: each rank broadcasts its finished shard; both assemble
+          w = [0.9  2.0  2.9  3.9  4.9  5.9  6.9  7.9]
+        This is NOT "syncing drifted weights" — nothing drifted. It
+        distributes the results of a partitioned computation: two people
+        solving disjoint halves of a worksheet and photocopying.
+        CONCATENATION, never averaging.
+Step 5  next forward: identical replicas, like DDP never left.
+
+Invariant (simulated): DDP on the same numbers gives the same w; over 50
+random steps max|DDP - ZeRO1| = 0.0. ZeRO-1 changes WHERE arithmetic
+happens, never WHAT. It is exact — not approximate, not "slightly flawed".
+
+The "flawed" confusion, killed: the broken thing in the DDP discussion was
+WEIGHT-AVERAGING — a rejected DDP alternative where each rank does a FULL
+update with its DIFFERENT local grad and the N disagreeing answers get
+averaged (breaks under Adam: nonlinear in g, states drift; demo: 0.050 move
+vs the correct 0.100). ZeRO-1 is nothing like it: averaging happens at the
+GRAD stage (the linear place, same as DDP), each element is updated ONCE by
+one owner, and the all-gather concatenates non-overlapping pieces.
+
+Ledgers:
+  comms  = DDP exactly. ring allreduce(P) == reduce-scatter(P)+all-gather(P);
+           Z1 slips the optimizer step between the two halves. Toy: 4+4
+           elems sent per rank either way.
+  memory = per rank: DDP 16 B/param; Z1 = 4 (fp16 w + fp16 g, both FULL)
+           + 12/N (master+m+v). Toy: 128 -> 80 bytes. 7B, N=8: 112 -> 38.5 GB.
+
+Gotchas: ownership is permanent (rank k's m/v are that shard's entire
+gradient history) -> checkpoints are sharded on disk; consolidation scripts
+exist. Global grad-norm clipping couples elements -> one scalar allreduce of
+partial sum-of-squares (cheap; the exception proving the elementwise rule).
+
+---- ZERO-2: THE TIMELINE -----------------------------------------------------
+
+The stage-1 leftover: RECEIVING grads per-chunk != STORING them per-chunk.
+Backward materializes the FULL local gradient regardless (the GPU computed
+all 8 elements) — in Z1 that buffer sits whole until one big reduce-scatter
+at the end. Hence the 4 in "4 + 12/N".
+
+New ingredient: TIME. Backward produces grads in REVERSE layer order, in
+buckets. Toy: buckets of 2, order B3=g[6:8] first ... B0=g[0:2] last.
+Watch rank0's grad buffer:
+
+  ZeRO-1 (reduce once, at the end)     ZeRO-2 (reduce per bucket, free at once)
+  B3 ready -> buffer 2  (sits)         B3 -> RS now -> rank1 owns -> FREE -> 0
+  B2 ready -> buffer 4  (sits)         B2 -> RS now -> rank1 owns -> FREE -> 0
+  B1 ready -> buffer 6  (sits)         B1 -> RS now -> rank0 OWNS -> keep gbar[2:4]=[0.4 0.6] -> 2
+  B0 ready -> buffer 8  <- PEAK=FULL   B0 -> RS now -> rank0 OWNS -> keep gbar[0:2]=[0.4 0.0] -> 4
+  one big RS -> keep 4, free 4         PEAK = own share + 1 in-flight bucket = 4, never 8
+
+Both timelines end in the IDENTICAL state (rank0 holding gbar[0:4]); update
++ all-gather then proceed exactly as Z1 steps 3-5. Z2 changes no math, no
+end state, no wire bytes (4 small reduce-scatters == 1 big one, chunked) —
+only the ROUTE: piecewise-during-backward, so the full buffer never exists.
+One line: a grad's useful life on a non-owner rank is birth-to-reduction.
+Z1 makes them all wait for a group funeral; Z2 buries each the moment its
+reduction lands. Bonus: early reduction overlaps backward (DDP's hiding
+trick recovered). Scale: 7B, N=8 -> grad peak 14 GB -> 1.75 GB + a bucket.
+Caveat: naive grad accumulation conflicts — non-owned local grads are gone;
+accumulate into the reduced OWNED chunks instead (DeepSpeed handles it;
+no_sync-style tricks don't transfer unchanged).
+
+---- ZERO-3: NOT "1+2 COMBINED" -----------------------------------------------
+
+First: "Z1 + Z2 combined" IS Z2 — the stages are cumulative (2 contains 1).
+Z3 adds a NEW mechanism, not a combination: it shards the weights' PRESENCE.
+
+The qualitative jump: Z1/Z2 shard state consumed OUTSIDE the compute path
+(optimizer states at the step boundary, grads at the reduction endpoint) —
+forward/backward remain byte-identical DDP. Z3 shards what compute ITSELF
+consumes, so communication moves INSIDE forward and backward as just-in-time
+fetches. Everything else follows from that.
+
+Resting state — first surprise. Toy gets layer structure:
+  L0 = (w0,w1)   L1 = (w2,w3)   L2 = (w4,w5)   L3 = (w6,w7)
+  rank0 rest set: w0, w2, w4, w6     <- HALF OF EVERY LAYER (4/8 elems)
+  rank1 rest set: w1, w3, w5, w7
+NOT "rank0 keeps L0-L1"! The even split keeps every gather balanced (each
+rank contributes half); layer-wise ownership would make "gather L2" a
+broadcast from one rank while the other idles.
+
+STILL DATA PARALLELISM — the misconception to kill: no rank computes "its
+part of the model". Each rank runs the FULL network on its OWN micro-batch;
+the sharding is a STORAGE arrangement, not a division of compute labor.
+Mental model: two chefs, each cooking THEIR OWN dish, from one cookbook
+whose pages they split for storage — before each recipe step they photocopy
+the missing half-page from each other, cook their own dish, toss the copy.
+Neither ever cooks half a dish.
+
+The forward, properly. Toy layer op: x_out = w_even * x_in + w_odd.
+Private data: rank0's batch x0 = 2.0, rank1's batch x1 = 3.0.
+Every layer runs the same four-beat rhythm — GATHER, COMPUTE, EVICT, ADVANCE:
+
+  L0=(1,2): gather  (rank0 sends w0, rank1 sends w1; simultaneous, symmetric)
+            compute rank0: h = 1*2.0+2 = 4.0     rank1: h = 1*3.0+2 = 5.0
+                    (same weights, different data — pure data parallelism)
+            evict   rank0 drops w1, rank1 drops w0; activations stay
+  L1=(3,4): gather -> rank0: 3*4.0+4 = 16.0      rank1: 3*5.0+4 = 19.0
+  L2=(5,6): gather -> rank0: 5*16+6  = 86.0      rank1: 5*19+6  = 101.0
+  L3=(7,8): gather -> rank0: 7*86+8  = 610       rank1: 7*101+8 = 715
+
+Different outputs because the DATA differs; the weights each rank used were
+identical at every layer. Weight residency peak: own 4 + 1 borrowed = 5,
+never 8 — the full model NEVER exists anywhere.
+
+  private forever:  batch, activations, output, loss
+  owned at rest:    your 1/N of every layer
+  borrowed:         the other part of the current layer, during its beat only
+
+Backward — second surprise: needs each layer's weights AGAIN (the chain rule
+multiplies by the forward-time W, which was evicted!). So backward
+re-gathers L3 -> L0, and the inherited Z2 reflex fires per layer: grads born
+-> reduce-scatter -> free.
+
+Step — the structural surprise: update own shard, and NO post-step
+all-gather. Z1's step 4 DISAPPEARS: sharded IS the resting state; nothing to
+rebuild. Updates propagate lazily — the next forward's gather of L0 simply
+picks up rank0's fresh w0 = 0.9. No wholesale sync ever happens.
+
+Ledgers (counted in the toy, per rank, elems sent):
+  Z2:  4 grads + 4 post-step params            = 8
+  Z3:  4 fwd gathers + 4 bwd gathers + 4 grads = 12  -> 1.5x, unconditionally
+  memory at scale (7B, N=8, 32 layers), per rank, all 16 bytes:
+    Z2: 26.25 GB  (fp16 weights still FULLY resident: 14 GB — the floor)
+    Z3: 14.00 GB  (weights resident 1.75 GB + ~0.44 GB one gathered layer)
+  Z3 is the stage that lets N GPUs hold a model NONE could hold alone; Z1/Z2
+  never can — their 2 B/param resident-weights floor doesn't shrink with N.
+
+Bytes vs time: the 1.5x in BYTES is unconditional; the cost in TIME is a
+regime. Prefetch gathers layer l+1 while layer l computes; hidden iff
+  compute(l) >= transfer(l+1):  compute ~ B*L*H^2 flops, transfer ~ H^2 bytes
+so the hiding ratio ~ tokens per micro-batch (B*L) and interconnect speed.
+Fat micro-batches + NVLink: gathers vanish, Z3 ~ free. Tiny batches or
+ethernet: every gather pokes through as a stall, ~3L sync points per step.
+
+"Won't ranks depend on each other?" — yes, and that's the real price; but
+characterize it: (1) symmetric lockstep handshakes between peers doing
+mirror-image work, not waiting on a busy stranger; (2) not NEW — DDP already
+has a per-step barrier (the allreduce); Z3 refines it to per-layer (~3L per
+step): same disease, higher frequency; (3) prefetch makes it latency-free
+when healthy. Real bites: jitter amplification (one rank's hiccup stalls
+everyone at the next gather, 3L times a step); wants fast interconnect; and
+NO RANK HOLDS A WHOLE MODEL — in DDP any survivor can dump a checkpoint, in
+Z3 one rank's death loses 1/N; checkpointing and fault tolerance become
+collective operations by construction.
+
+Compressed mental model: Z3 manufactures the ILLUSION of full replication —
+virtual memory for weights (the program believes it has all the RAM; the
+pager shuttles pages behind its back). It rents the model one layer at a
+time instead of owning a copy: pays bandwidth, which prefetch can hide, to
+stop paying memory, which nothing can hide.
+Z1/Z2 shard STORAGE; Z3 shards PRESENCE.
+
+---- DEEPSPEED vs FSDP vs "MODEL SHARDING" ------------------------------------
+
+Is Z3 "model sharding"? The term has two meanings:
+  storage sense (weights stored split across GPUs): YES — no rank holds a copy.
+  compute sense (= model parallelism: ranks responsible for different parts
+  of the COMPUTATION): NO — Z3 divides zero compute.
+Accurate sentence: Z3 is DATA parallelism with model-sharded STORAGE.
+PyTorch's name is the cleanest answer: FSDP = Fully Sharded (storage) Data
+Parallel (algorithm) — both halves load-bearing. FSDP is the same algorithm
+as Z3; its gather unit is the FSDP-wrapped module, so HOW you wrap (per
+block vs whole model) sets peak memory and gather count.
+
+Taxonomy — three independent axes (DeepSpeed ships all three and composes
+them as "3D parallelism"):
+                     what's divided       wire cargo (fwd)       rank computes
+  data parallel      the BATCH            grads (+weight         full model,
+  (DDP,Z1/2/3,FSDP)  (+storage for ZeRO)  gathers for Z3)        own data
+  tensor parallel    each weight MATRIX   activations, inside    a slice of every
+  (Megatron-style)                        every layer            layer, shared data
+  pipeline parallel  the DEPTH (L0-7 ->   activations, at        a few layers,
+  (GPipe-style)      gpu0, L8-15 -> ...)  stage boundaries       everyone's data
+
+Z3 is the endpoint of the data-parallel column getting memory-lean
+(DDP -> Z1 -> Z2 -> Z3), not a member of the other columns. The confusion is
+baked into the sales pitch — ZeRO paper: "memory savings of model
+parallelism with the compute efficiency of data parallelism"; the FOOTPRINT
+looks like MP, the ALGORITHM is DP.
+
+Litmus tests (either settles it in one sentence):
+  1. Does each rank get its OWN slice of the batch and run the WHOLE net on
+     it?  yes -> data parallel (Z3/FSDP).
+  2. What crosses the wire during forward?  weights -> Z3/FSDP;
+     activations -> tensor or pipeline parallel.
+
+Choosing in practice: lowest ZeRO stage that fits (each stage up trades sync
+sensitivity for memory); CPU/NVMe offload is the LAST resort (PCIe is far
+slower than HBM); Z3/FSDP wants NVLink-class interconnect and fat
+micro-batches so prefetch stays ahead of compute.
+
+================================================================================
+4. THROUGHPUT
+================================================================================
+
+Q: Gradient checkpointing?
+A: Store O(sqrt(L)) activation checkpoints instead of all L; recompute each
+   segment during backward. Measured 43.8x activation-memory cut, ~1.3-1.6x
+   slower (an extra forward). Useless when the backbone is frozen (no backward
+   through it). Forces use_cache=False.
+
+Q: use_cache / KV cache?
+A: Caches past positions' K/V during GENERATION (measured 5.1x). Training does
+   full-sequence forwards and the weights change every step -> cache useless/stale.
+
+Q: Gradient accumulation — equivalence and negatives?
+A: Summing grads over k micro-batches then stepping once == one big batch,
+   mathematically. Negatives:
+   (1) inherits the LARGE-BATCH cost: fewer, cleaner updates; small noisy steps
+       explore and find flatter minima (Keskar et al. generalization gap; partly
+       repaired by LR scaling + warmup, Goyal et al.). Choose the effective batch
+       for optimization reasons; accumulation only REACHES it when memory won't.
+   (2) DDP: wrap non-final micro-steps in no_sync() or pay allreduce per micro-batch.
+   (3) LR schedule must count optimizer steps, not micro-steps.
+   (4) BatchNorm sees micro-batch stats (irrelevant for LayerNorm transformers).
+   Measured: naive+accum beat checkpointing at equal effective batch
+   (89 vs 123 ms/sample).
+
+Q: What does "device saturated" mean; why did batch 64 beat 32 in epoch time?
+A: Saturated = enough parallel work that every compute unit is busy -> time
+   scales with work; doubling batch doubles step time, epoch unchanged.
+   Below the knee, each step carries fixed overheads (kernel launch, dispatch,
+   dataloader python, optimizer, allreduce latency) -> doubling batch
+   less-than-doubles step time -> real epoch speedup.
+   Measured (gpt2, MPS, seq 128) ms/sample:
+   bs1 49.5 | 2 42.6 | 4 41.6 | 8 44.3 | 16 43.8 | 32 42.8  -> knee ~2-4 here.
+   "64 beat 32" = you were left of YOUR knee (bigger model/GPU -> knee further
+   right, and real loops carry more per-step overhead than a clean benchmark).
+   Which regime you're in is a measurement, never an assumption.
+
+================================================================================
+5. TOKENIZERS & POOLING
+================================================================================
+
+Q: What does a [PAD] position's hidden state contain?
+A: The attention mask blocks pads as KEYS, not as QUERIES -> pad positions still
+   attend to real content: content-dependent but position-contaminated. Never
+   pool them. h[:, -1] on a right-padded batch reads a pad -> the reward depends
+   on batch composition. Mask-aware last: idx = mask.sum(1) - 1 (assumes right
+   padding; padding-agnostic: L - 1 - mask.flip(1).argmax(1)).
+
+Q: len(tokenizer) vs vocab_size?
+A: len() counts added/special tokens; vocab_size often doesn't. Gate storage
+   dtype by len(): uint16 iff len < 65536. numpy astype overflows by SILENT
+   MODULO -> explicit max-id/min-id check before any downcast.
+
+Q: Pretokenization — what to cache?
+A: Cache per ITEM, never per batch; store CAPPED (tokenizer-truncated) ids —
+   slicing uncapped ids yourself amputates schemes like BERT's final [SEP].
+   Measured: pretokenized path ~7x per epoch, break-even 1.31 epochs.
+
+Q: pair_uid packing?
+A: uid = group_uid*1e6 + chosen_idx*1e3 + rejected_idx (place-value). Injective
+   iff _UID_GROUP == _UID_IDX^2 and idx < 1e3 (bounds-checked). Ad-hoc "+7"
+   constants broke injectivity: (5,993,56) collided with (6,0,0).
+
+================================================================================
+6. DATA DIAGNOSTICS (TIER 0/1)
+================================================================================
+
+Q: Mean pairwise cosine in O(Nd)?
+A: With unit rows and m = sum of rows: sum of all pairwise cos = m.m - N,
+   so mean = (m.m - N) / (N(N-1)). Range sanity: [-1/(N-1), 1].
+
+Q: Gram trick for spectra?
+A: Nonzero eigenvalues of X X^T (NxN) == X^T X (dxd) -> eigendecompose the
+   smaller. Vendi = exp(entropy of normalized eigenvalues) = perplexity of the
+   spectrum = effective count of distinct directions. Participation ratio =
+   (sum lam)^2 / sum lam^2 = Hill number q=2 (dominance-weighted effective dim).
+
+Q: Power iteration + deflation?
+A: v <- Av/||Av|| converges to the top eigenvector (rate lam2/lam1); subtract
+   the found component to deflate, repeat for next PCs; PC1 sign oriented toward
+   the mean-delta direction so it's comparable across runs.
+
+Q: MMD + permutation test without loops?
+A: MMD^2 terms are quadratic forms z^T K z with +-1/group indicator columns ->
+   one K@Z matmul evaluates B permutations at once; unbiased diagonal
+   correction; p = (1 + #{null >= real}) / (1 + B).
+
+================================================================================
+7. PYTORCH / AUTOGRAD MECHANICS
+================================================================================
+
+Q: torch.no_grad vs torch.inference_mode?
+A: Both stop gradient RECORDING (outputs requires_grad=False). Difference:
+   no_grad tensors stay ORDINARY — autograd's supporting bookkeeping (version
+   counter bumped per in-place op, view metadata) keeps running so they can
+   RE-ENTER autograd safely later. inference_mode skips that bookkeeping and
+   BRANDS its tensors (is_inference() True) as never-touching-autograd-again,
+   enforcing it:
+   1) feed a TRAINABLE module: no_grad feature -> backward OK (grad flows to
+      the module's weights, not the feature — that's what frozen means);
+      inference feature -> RuntimeError "Inference tensors cannot be saved
+      for backward" (the matmul must save its input for dW).
+   2) in-place outside the block: no_grad tensor fine; inference tensor ->
+      RuntimeError (no version counter to keep the mutation honest).
+   3) enable_grad nested inside no_grad re-enables recording; inside
+      inference_mode it is INERT — one-way door for the whole scope.
+   4) speed: skipped bookkeeping measured 1.06x on 200k tiny ops; rounds to
+      noise for big matmuls. Choose by SEMANTICS, speed is a bonus.
+   Rule: inference_mode when outputs are TERMINAL (eval loop, generation,
+   metrics, Tier-1 embedder -> numpy). no_grad when outputs may flow onward —
+   the linear-probe pattern exactly: frozen backbone under no_grad feeding a
+   trainable head works (and skips backbone activation storage); under
+   inference_mode it crashes. step_12 _probe: no_grad, correct as is.
+
+================================================================================
+8. REWARD MODEL / BT LOSS
+================================================================================
+
+Q: Why bias=False on the reward head?
+A: Under pairwise BT loss, r_w - r_l = w.(h_w - h_l) — the bias cancels EXACTLY,
+   so dloss/db == 0 every batch (measured: bias.grad = [0.]). Dead parameter,
+   stays at init, means nothing. Same identifiability argument as the Tier-1
+   probe's missing intercept. Declared bias=True honored for pointwise uses.
+
+Q: Why no regularization in the head module?
+A: Modules define FUNCTIONS; regularization is TRAINING POLICY — it lives in
+   declared config -> trainer -> optimizer (weight decay is an AdamW arg, not a
+   module feature). The two standard regularizers split oppositely for RMs:
+   - weight decay: NEEDED. BT = logistic regression on differences; on
+     separable data (ours: 0.99) ||w|| -> inf and margins inflate forever.
+     Demo: wd=0 -> |w| 14.9->24.2 climbing, max|r| -> 91 (the F1 ~100
+     magnitudes COME from this); wd=0.01 damps toward equilibrium (70.5).
+     Pin and decay answer the same phenomenon from two sides.
+   - dropout: HARMFUL. Rewards must be deterministic; chosen/rejected draw
+     different masks -> artificial margin noise; stochastic reward feeds PPO
+     noise. Practice: disable dropout ENTIRELY for RM training, incl. the
+     backbone (pending config override, alongside use_cache=False).
+   Regularization budget, strongest first: freeze (probe), early stop,
+   weight_decay (no-decay param groups for LayerNorm/bias), lr.
+
+Q: Why is the head ONE linear layer — no ReLU, no MLP?
+A: The backbone IS the nonlinearity (12+ layers); the head only picks a
+   DIRECTION in representation space — standard closing move (BERT/GPT heads,
+   public RMs all use a single linear score head). linear(relu(h)) specifically
+   is a bug, not a choice: h is LayerNorm-world zero-centered, relu on the RAW
+   representation deletes the sign half of every dim — h_w=[-1,.5], h_l=[-3,.5]
+   -> relu makes them IDENTICAL, unseparable forever. Activations go BETWEEN
+   learned layers, never on the input. Linear also buys: frozen mode == the
+   Tier-1 probe exactly (diagnostic corresponds to model), reward = inspectable
+   direction (compare w to probe/PC1), convex in probe mode, one-op fp32 pin.
+   A deeper head would be a DECLARED architecture later, not a default.
+
+Q: Why BT loss — not pointwise BCE (chosen=1, rejected=0) or margin/hinge loss?
+A: BT IS BCE, at the right granularity: softplus(r_l - r_w) == BCE(sigmoid(r_w
+   - r_l), 1) (verified to 4.5e-8). Pointwise BCE invents ABSOLUTE labels for
+   RELATIVE data: a great-but-rejected response is not "0"; it demands r>0/r<0
+   on one global scale across prompts with different quality baselines
+   (conflicting gradients), while BT's per-pair constraint r_w > r_l is exactly
+   what the annotator asserted. BT is invariant to per-prompt shifts (the F3
+   dead-bias argument generalized) and is the MLE of P(A>B) = sigmoid(r_A -
+   r_B) (Bradley-Terry 1952; Elo). vs hinge max(0, m - (r_w - r_l)) (mind the
+   sign — penalize the UNachieved margin): BT grad weight = sigmoid(r_l - r_w)
+   = P(model currently wrong) — self-weighting, never exactly zero; hinge is
+   all-or-nothing (1 inside margin, 0 outside). Hinge's m is a hyperparameter
+   in unitless reward space (separable data satisfies any m by inflating |w|);
+   BT has none and gives units for free (margins are log-odds, sigma(diff) a
+   probability). BT extends (soft targets, Plackett-Luce K-way, ties); hinge
+   doesn't. Margin survives INSIDE BT: Llama-2's -log sigmoid(r_w - r_l -
+   m(grade)) for graded preferences — modulating the likelihood, not replacing.
+
+Q: Derive the stable softplus: why max(x,0) + log1p(exp(-|x|))?
+A: BT loss = -ln sigmoid(delta) = log1p(e^-delta) = softplus(-delta) — the
+   one-branch form, which STILL dies (log1p(e^89) -> log1p(inf) = inf, same
+   cliff as naive; measured). Danger is one-sided: exponent large POSITIVE.
+   For y>0 pull the mountain out of the log — EXACT identity, no approx:
+   ln(1+e^y) = ln(e^y(1+e^-y)) = y + log1p(e^-y). y<=0 already safe. Unify:
+   max(y,0) + log1p(e^-|y|). Exponent now always <= 0 -> e^arg in (0,1] ->
+   overflow structurally impossible; the only failure left is e^-|y|
+   underflowing to 0, which is BENIGN: log1p(0)=0 and the true correction
+   (e.g. e^-105) is below one ulp of the answer. The trick = relocate a fatal
+   overflow into a sub-ulp underflow. log1p not ln(1+u): 1+4e-18 == 1
+   (swallowing, the fp32-master disease inside a log); log1p computes from u
+   directly. Torch impl detail: threshold variant (x>20 -> return x;
+   correction 2e-9 < ulp(20)) — same guarantee, one comparison cheaper.
+
+Q: What is accuracy_se = sqrt(p(1-p)/n) and why log it?
+A: The sd of the accuracy NUMBER itself. One pair = Bernoulli(p), Var =
+   p(1-p) (at 0.75: 0.1875); mean of n -> Var/n; se = sqrt. Verified by sim:
+   20k repeated n=1000 evals at p=0.75 -> empirical sd 0.0138 vs formula
+   0.0137. Buys the checkpoint rule: n=1000 -> 95% band +/-2.7 pts, so
+   0.750 vs 0.762 is NOISE. Scaling 1/sqrt(n) (halve bars = 4x pairs);
+   worst case se <= 0.5/sqrt(n) at p=0.5; 0.5-credit ties LOWER true
+   variance so the plug-in se is conservative (frac_ties says when).
+   Margin note (Q2 of same arc): margin m moves the tie point — y = m +
+   (r_l - r_w), loss ln2 at delta == m, full-strength gradient while
+   winning by less than m.
+
+Q: Should the trainer's best-checkpoint gate (min_delta) be derived from acc_se?
+A: No — declared knob, default 0. (1) P8: "how much improvement is real" is
+   policy, not measurement; an se-derived gate makes best-selection depend on
+   VAL-SET SIZE. (2) Ratchet failure: +0.004/eval x 10 evals = +0.04 real,
+   but every step < se-gate 0.014 -> best never moves, early stop fires.
+   (3) The stats are wrong anyway: A-vs-B on the SAME val set is a PAIRED
+   comparison — errors correlate, Var(diff) << 2*se^2 (only the flipped pairs
+   matter; proper version is McNemar) — so an se-gate is over-conservative
+   while looking principled. Division of labor: min_delta=0 ratchets on any
+   gain; accuracy_se is LOGGED beside every eval for the human to judge.

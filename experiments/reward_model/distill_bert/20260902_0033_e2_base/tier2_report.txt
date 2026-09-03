@@ -1,0 +1,45 @@
+============================================================================
+TIER 2 DIAGNOSTICS   (the trained model vs the predictions)
+============================================================================
+  source          : 20260902_0033_e2_base @ best (step 1000)
+
+---- DIRECTION -------------------------------------------------------------
+  val pairs         6,289     accuracy 1.000
+  cos(w, mean delta)  +0.924
+  cos(w, PC1)         +0.923   (PC1 explains 89.4% of unit-delta var)
+  ||delta|| median    25.792
+
+---- SLICES (Tier-1 registry) ----------------------------------------------
+  slice                          pairs     acc      se
+  match_newline_count              937   0.998   0.002
+  match_has_newline                938   0.998   0.002
+  match_multi_line                 938   0.998   0.002
+  match_char_length                745   0.999   0.001
+  match_has_comma                1,826   0.999   0.001
+  match_avg_word_length          2,282   1.000   0.000
+  match_unique_word_ratio        4,902   1.000   0.000
+  match_question_mark            6,247   1.000   0.000
+  match_hedging                  6,255   1.000   0.000
+  match_refusal                  6,272   1.000   0.000
+  match_bullet_list              6,289   1.000   0.000
+  match_code_fence               6,289   1.000   0.000
+  match_emoji                    6,289   1.000   0.000
+  match_markdown_bold            6,289   1.000   0.000
+  match_markdown_header          6,289   1.000   0.000
+  match_numbered_list            6,289   1.000   0.000
+  match_repetitive               6,289   1.000   0.000
+  raw                            6,289   1.000   0.000
+  match_ends_with_period         5,923   1.000   0.000
+  match_exclamation              5,957   1.000   0.000
+  match_punctuation                514   1.000   0.000
+  match_word_count                 526   1.000   0.000
+
+---- EXTREMES (uid, margin) ------------------------------------------------
+  worst: (4601000001, -4.69)  (3828000001, -2.91)  (2415000001, +0.12)  (5871000001, +0.18)
+  best : (1156000001, +15.99)  (3462000001, +15.92)  (6044000001, +15.88)  (1279000001, +15.83)
+
+---- RUN CURVES ------------------------------------------------------------
+  loss  0.6249084305763245 -> 0.0003454711761791174   (60 logged steps)
+  eval acc  1.000 -> 1.000 -> 1.000 -> 1.000
+  |reward| max  7.69 -> 9.15   <- the inflation canary
+============================================================================

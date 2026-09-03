@@ -1,0 +1,9 @@
+{
+  "steps": 4095,
+  "epochs_run": 3,
+  "best_metric": 0.9872793555259705,
+  "best_step": 3500,
+  "final_accuracy": 0.9872793555259705,
+  "early_stopped": false,
+  "wall_seconds": 179.377010833
+}

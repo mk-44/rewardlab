@@ -1,0 +1,6 @@
+{
+  "batches_per_epoch": 1365,
+  "steps_per_epoch": 1365,
+  "total_steps": 4095,
+  "dropout_zeroed": 19
+}

@@ -1,0 +1,33 @@
+{
+  "n_rows_in": 49948,
+  "n_prompts_in": 1058,
+  "n_exact_duplicate_rows": 80,
+  "n_rows_dropped_as_duplicates": 0,
+  "method": "hash",
+  "val_frac_requested": 0.1,
+  "seed": null,
+  "prompt_field": "prompt",
+  "n_rows_train": 43659,
+  "n_rows_val": 6289,
+  "n_prompts_train": 925,
+  "n_prompts_val": 133,
+  "prompt_frac_val": 0.12570888468809074,
+  "row_frac_val": 0.1259109473852807,
+  "n_overlap_prompts": 0,
+  "rows_per_prompt_min": 32,
+  "rows_per_prompt_max": 50,
+  "train_path": "preference_data/train.jsonl",
+  "val_path": "preference_data/val.jsonl",
+  "train_sha256": "8b4d2a4bafc016e5458cc65dbb46fe385d85c4dae266af9098d69fba344aeb94",
+  "val_sha256": "283028003963aeedaead086153d1f5b2bd0b3d553c7e0b04cab387aaa387a477",
+  "inputs": [
+    [
+      "../RL/projects/rhyming/data/preferences_train.json",
+      "b155cf149f3160d4cc1e469bb1e64f3d060b96e4862034c4ba14b9a7779a6809"
+    ],
+    [
+      "../RL/projects/rhyming/data/preferences_val.json",
+      "99a71c55ffbbc67616196ad6ea614628f978466c9594dba13b6c53fcc4c69eee"
+    ]
+  ]
+}

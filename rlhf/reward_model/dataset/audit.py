@@ -5,7 +5,7 @@ import random
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Literal
-from rlhf.dataset.schema import PairView, PreferenceGroup, groups_to_pairs
+from rlhf.reward_model.dataset.schema import PairView, PreferenceGroup, groups_to_pairs
 
 _TOKEN_RE = re.compile(r"[a-z0-9']+|\n")
 _PUNCT = set(".,;:!?\"'()[]{}-—")

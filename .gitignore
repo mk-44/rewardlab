@@ -1,4 +1,10 @@
-# ── local only, never pushed ─────────────────────────────────────────────────
+# ── secrets — never, under any circumstance ──────────────────────────────────
+.env
+*.env
+.env.*
+!.env.example
+
+# ── local only, not pushed yet ───────────────────────────────────────────────
 tests/
 notebooks/
 venv/
@@ -28,3 +34,4 @@ logs/
 .idea/
 .vscode/
 .cache/
+experiments/**/checkpoints/

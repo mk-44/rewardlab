@@ -1,8 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Any, Sequence, Optional
-from rlhf.core.contracts import DataError, ConfigError
-from rlhf.dataset.schema import UNASSIGNED_UID, PreferenceGroup
+from rlhf.reward_model.core.contracts import DataError, ConfigError
+from rlhf.reward_model.dataset.schema import UNASSIGNED_UID, PreferenceGroup
 
 RecordFormat = Literal["pairwise", "pairwise_implicit", "kway", "arena"]
 REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {

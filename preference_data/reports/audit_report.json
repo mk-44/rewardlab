@@ -1,0 +1,335 @@
+{
+  "source": "preference_data/train.jsonl",
+  "expected_ceiling": 0.75,
+  "structure": {
+    "n_groups": 43659,
+    "n_pairs": 43659,
+    "n_unique_prompts": 925,
+    "k_histogram": {
+      "2": 43659
+    },
+    "n_exact_duplicates": 72,
+    "n_identical_sides": 0,
+    "n_all_tied": 0,
+    "n_empty_response": 0,
+    "slice_keys": {},
+    "leakage_prompts": 0,
+    "leakage_rate": 0.0
+  },
+  "lengths": {
+    "chosen": {
+      "q05": 76.0,
+      "q50": 91.0,
+      "q95": 107.0
+    },
+    "rejected": {
+      "q05": 17.0,
+      "q50": 54.0,
+      "q95": 91.0
+    },
+    "p_longer_wins": 0.9430128953938478,
+    "frac_near_equal": 0.10719439290867862
+  },
+  "lexical": {
+    "accuracy": 0.9983967017865323,
+    "status": "ok",
+    "reason": "",
+    "n_train_pairs": 34927,
+    "n_test_pairs": 8732,
+    "vocab_size": 9516,
+    "top_chosen": [
+      [
+        "ignite",
+        6.35
+      ],
+      [
+        "kindness",
+        5.4
+      ],
+      [
+        "spirit",
+        5.36
+      ],
+      [
+        "collide",
+        5.27
+      ],
+      [
+        "swirl",
+        5.2
+      ],
+      [
+        "i'd",
+        5.13
+      ],
+      [
+        "nineteen",
+        5.11
+      ],
+      [
+        "soul",
+        5.09
+      ],
+      [
+        "you'll",
+        5.07
+      ],
+      [
+        "courage",
+        5.05
+      ],
+      [
+        "challenge",
+        5.04
+      ],
+      [
+        "worries",
+        5.04
+      ],
+      [
+        "ignites",
+        5.04
+      ],
+      [
+        "zest",
+        5.02
+      ],
+      [
+        "wisdom",
+        5.02
+      ],
+      [
+        "dear",
+        4.96
+      ],
+      [
+        "freedom",
+        4.95
+      ],
+      [
+        "let",
+        4.91
+      ],
+      [
+        "weave",
+        4.91
+      ],
+      [
+        "worlds",
+        4.89
+      ]
+    ],
+    "top_rejected": [
+      [
+        "rat",
+        -6.71
+      ],
+      [
+        "likely",
+        -6.38
+      ],
+      [
+        "fat",
+        -6.38
+      ],
+      [
+        "located",
+        -6.24
+      ],
+      [
+        "practicing",
+        -6.17
+      ],
+      [
+        "mat",
+        -6.15
+      ],
+      [
+        "due",
+        -6.13
+      ],
+      [
+        "typically",
+        -6.06
+      ],
+      [
+        "involves",
+        -6.05
+      ],
+      [
+        "popular",
+        -6.02
+      ],
+      [
+        "sat",
+        -6.01
+      ],
+      [
+        "includes",
+        -5.97
+      ],
+      [
+        "positive",
+        -5.9
+      ],
+      [
+        "important",
+        -5.88
+      ],
+      [
+        "effective",
+        -5.81
+      ],
+      [
+        "various",
+        -5.72
+      ],
+      [
+        "3",
+        -5.66
+      ],
+      [
+        "during",
+        -5.6
+      ],
+      [
+        "environment",
+        -5.58
+      ],
+      [
+        "exercising",
+        -5.53
+      ]
+    ],
+    "note": "Naive Bayes is a weak model so this is a LOWER BOUND. A high value is decisive. A low value proves nothing."
+  },
+  "baselines": {
+    "char_length": 0.945979065026684,
+    "word_count": 0.8795895462562129,
+    "newline_count": 0.9259373783183307,
+    "punctuation": 0.9237728761538285,
+    "unique_word_ratio": 0.4022080212556403,
+    "avg_word_length": 0.5230536659108088,
+    "lexical_nb": 0.9983967017865323
+  },
+  "surface": [
+    {
+      "name": "has_newline",
+      "p_chosen": 1.0,
+      "p_rejected": 0.14819395771776725,
+      "gap": 0.8518060422822328,
+      "chi2": 64778.254144307684
+    },
+    {
+      "name": "multi_line",
+      "p_chosen": 1.0,
+      "p_rejected": 0.14819395771776725,
+      "gap": 0.8518060422822328,
+      "chi2": 64778.254144307684
+    },
+    {
+      "name": "has_comma",
+      "p_chosen": 0.9928995167090405,
+      "p_rejected": 0.293937103460913,
+      "gap": 0.6989624132481276,
+      "chi2": 46483.51681764481
+    },
+    {
+      "name": "ends_with_period",
+      "p_chosen": 0.9301404063308826,
+      "p_rejected": 0.9822029822029822,
+      "gap": -0.052062575872099684,
+      "chi2": 1411.9019114408834
+    },
+    {
+      "name": "exclamation",
+      "p_chosen": 0.0575139146567718,
+      "p_rejected": 0.0066652923795780935,
+      "gap": 0.05084862227719371,
+      "chi2": 1817.1997284347817
+    },
+    {
+      "name": "question_mark",
+      "p_chosen": 0.02627178817655008,
+      "p_rejected": 0.009184818708628232,
+      "gap": 0.017086969467921848,
+      "chi2": 365.994929110032
+    },
+    {
+      "name": "hedging",
+      "p_chosen": 2.2904784809546716e-05,
+      "p_rejected": 0.00962000962000962,
+      "gap": -0.009597104835200073,
+      "chi2": 419.0298356065582
+    },
+    {
+      "name": "emoji",
+      "p_chosen": 0.0008703818227627752,
+      "p_rejected": 0.00011452392404773357,
+      "gap": 0.0007558578987150416,
+      "chi2": 25.338059195406128
+    },
+    {
+      "name": "refusal",
+      "p_chosen": 0.00041228612657184083,
+      "p_rejected": 0.0009849057468105087,
+      "gap": -0.0005726196202386678,
+      "chi2": 10.253064388464677
+    },
+    {
+      "name": "markdown_bold",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "markdown_header",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "bullet_list",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "numbered_list",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "code_fence",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "repetitive",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    }
+  ],
+  "baseline_acc_best": 0.9983967017865323,
+  "baseline_acc_best_name": "lexical_nb",
+  "baseline_acc_best_direction": "normal",
+  "lexical_sep_acc": 0.9983967017865323,
+  "lexical_sep_status": "ok",
+  "warnings": [
+    "REGIME MISMATCH  a trivial baseline (lexical_nb=0.998) already exceeds expected_ceiling=0.75. Human annotated data is not this separable, so either the declared regime is wrong or a shortcut is doing the work.",
+    "TASK IS LEXICALLY TRIVIAL  lexical_sep_acc=0.998 > 0.90. Bag of words alone nearly solves it.",
+    "A TRIVIAL MODEL ALREADY WINS  lexical_nb=0.998 > 0.80. Any reward model must clearly beat this to mean anything.",
+    "LENGTH IMBALANCE  p_longer_wins=0.943. Chosen and rejected differ systematically in length.",
+    "STRONG SURFACE SHORTCUT  has_newline gap=+0.852 (chosen 1.00 vs rejected 0.15).",
+    "NO SLICE KEYS  per slice metrics will report unavailable. Save a category field per row to enable them."
+  ]
+}

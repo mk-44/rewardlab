@@ -1,0 +1,423 @@
+{
+  "source": "preference_data/train.jsonl",
+  "n_pairs": 2000,
+  "n_sampled_from": 43659,
+  "health": {
+    "status": "ok",
+    "reason": "",
+    "backend": "hf",
+    "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    "dim": 384,
+    "n_texts": 6000,
+    "n_unique": 16484,
+    "n_lookups": 6000,
+    "n_cache_hits": 3072,
+    "n_embedded": 2890,
+    "mean_norm": 5.085644721984863,
+    "frac_zero_vectors": 0.0,
+    "effective_rank": 57.589312970058
+  },
+  "separability": {
+    "status": "ok",
+    "reason": "",
+    "frac_surface_controlled": 0.0035,
+    "separability_raw": 0.9887640449438202,
+    "separability_min": 0.9807073954983923,
+    "top_confound": "match_unique_word_ratio",
+    "top_confound_drop": 0.008056649445427944,
+    "slices": {
+      "raw": {
+        "status": "ok",
+        "reason": "",
+        "name": "raw",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": null
+      },
+      "match_has_newline": {
+        "status": "approximate",
+        "reason": "only 312 pairs, expect noise",
+        "name": "match_has_newline",
+        "n_pairs": 312,
+        "n_train": 249,
+        "n_test": 63,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_multi_line": {
+        "status": "approximate",
+        "reason": "only 312 pairs, expect noise",
+        "name": "match_multi_line",
+        "n_pairs": 312,
+        "n_train": 249,
+        "n_test": 63,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_markdown_bold": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_bold",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_markdown_header": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_header",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_bullet_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_bullet_list",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_numbered_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_numbered_list",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_code_fence": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_code_fence",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_emoji": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_emoji",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_question_mark": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_question_mark",
+        "n_pairs": 1948,
+        "n_train": 1572,
+        "n_test": 376,
+        "acc": 0.9920212765957447,
+        "auc": 0.9955084314169307,
+        "drop_vs_raw": -0.003257231651924486
+      },
+      "match_exclamation": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_exclamation",
+        "n_pairs": 1889,
+        "n_train": 1526,
+        "n_test": 363,
+        "acc": 0.9834710743801653,
+        "auc": 0.9977384665589023,
+        "drop_vs_raw": 0.005292970563654853
+      },
+      "match_hedging": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_hedging",
+        "n_pairs": 1980,
+        "n_train": 1587,
+        "n_test": 393,
+        "acc": 0.9923664122137404,
+        "auc": 0.9988539906376862,
+        "drop_vs_raw": -0.003602367269920248
+      },
+      "match_refusal": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_refusal",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_ends_with_period": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_ends_with_period",
+        "n_pairs": 1850,
+        "n_train": 1493,
+        "n_test": 357,
+        "acc": 0.988795518207283,
+        "auc": 0.9996704564178612,
+        "drop_vs_raw": -3.1473263462755696e-05
+      },
+      "match_has_comma": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_has_comma",
+        "n_pairs": 606,
+        "n_train": 488,
+        "n_test": 118,
+        "acc": 0.9830508474576272,
+        "auc": 0.9987072680264292,
+        "drop_vs_raw": 0.0057131974861930335
+      },
+      "match_repetitive": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_repetitive",
+        "n_pairs": 2000,
+        "n_train": 1644,
+        "n_test": 356,
+        "acc": 0.9887640449438202,
+        "auc": 0.9957391743466734,
+        "drop_vs_raw": 0.0
+      },
+      "match_char_length": {
+        "status": "approximate",
+        "reason": "only 226 pairs, expect noise",
+        "name": "match_char_length",
+        "n_pairs": 226,
+        "n_train": 183,
+        "n_test": 43,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_word_count": {
+        "status": "approximate",
+        "reason": "only 170 pairs, expect noise",
+        "name": "match_word_count",
+        "n_pairs": 170,
+        "n_train": 139,
+        "n_test": 31,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_newline_count": {
+        "status": "approximate",
+        "reason": "only 312 pairs, expect noise",
+        "name": "match_newline_count",
+        "n_pairs": 312,
+        "n_train": 249,
+        "n_test": 63,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_punctuation": {
+        "status": "approximate",
+        "reason": "only 157 pairs, expect noise",
+        "name": "match_punctuation",
+        "n_pairs": 157,
+        "n_train": 127,
+        "n_test": 30,
+        "acc": 1.0,
+        "auc": 1.0,
+        "drop_vs_raw": -0.011235955056179803
+      },
+      "match_unique_word_ratio": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_unique_word_ratio",
+        "n_pairs": 1557,
+        "n_train": 1246,
+        "n_test": 311,
+        "acc": 0.9807073954983923,
+        "auc": 0.995947105592374,
+        "drop_vs_raw": 0.008056649445427944
+      },
+      "match_avg_word_length": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_avg_word_length",
+        "n_pairs": 772,
+        "n_train": 621,
+        "n_test": 151,
+        "acc": 0.9867549668874173,
+        "auc": 0.9983334064295426,
+        "drop_vs_raw": 0.0020090780564029354
+      },
+      "all_matched": {
+        "status": "unavailable",
+        "reason": "only 7 pairs, need 100",
+        "name": "all_matched",
+        "n_pairs": 7,
+        "n_train": 0,
+        "n_test": 0,
+        "acc": null,
+        "auc": null,
+        "drop_vs_raw": null
+      }
+    }
+  },
+  "delta": {
+    "status": "ok",
+    "reason": "",
+    "n_pairs": 2000,
+    "mean_pairwise_cosine": 0.04146610200405121,
+    "frac_aligned_with_mean": 0.97,
+    "pc_explained_var": [
+      0.053847467444396994,
+      0.045407510130826556,
+      0.02041722551649331
+    ],
+    "effective_dim": 94.46711645821989,
+    "effective_dim_unit": 101.65933902693189,
+    "delta_norm_q05": 3.517711901664734,
+    "delta_norm_q50": 5.12324857711792,
+    "delta_norm_q95": 6.391140580177307,
+    "pc1_top": [
+      [
+        "A smooth stone glimmers like a polished dream,\nIts gentle curves flow with a tranquil gleam.",
+        "A cat sat on a mat, feeling quite fat,\nWhile the dog chased a frog, wearing a hat."
+      ],
+      [
+        "With silk spun threads, the message would glide,\nA web of whispers where secrets reside.",
+        "A spider does not send text messages."
+      ],
+      [
+        "Tell me of journeys where your heart found its thrill,\nWhat places ignited your spirit, and time stood still?",
+        "Ask if they traveled."
+      ],
+      [
+        "In sunlit corners, I dream and play,\nMy human's love makes each moment sway.",
+        "Pets would likely write about their daily routines and food."
+      ],
+      [
+        "As stars emerge, our minds unwind and dream,  \nResting our bodies under moonlight's gleam.",
+        "A cat sat on a mat and wore a hat,  \nIt chased a little mouse, oh how it sat!"
+      ]
+    ],
+    "pc1_bottom": [
+      [
+        "If pets could cast their votes today,\nWe'd see a world where dogs have their say.",
+        "The flowers bloom in the sunny glade,\nWhile shadows dance in the cool, dark shade."
+      ],
+      [
+        "The next prime after five is seven, you see,\nIt's a number that's special, as prime as can be.",
+        "In the garden, flowers bloom and sway,\nButterflies dance in a bright display."
+      ],
+      [
+        "A spider\u2019s web is a delicate lace,  \nThreads glisten like jewels in a sunlit space.",
+        "The clouds drift softly across the blue,  \nAs flowers bloom brightly, kissed by the dew."
+      ],
+      [
+        "To track your fitness, keep a daily log,\nWith graphs and charts, you'll feel like a cog.",
+        "The sun is bright, the sky is blue,\nI love to dance, how about you?"
+      ],
+      [
+        "The cockroach, a marvel of survival's art,\nCan roam for weeks, though headless, it won't part.",
+        "A frog leaps high, it dances with glee,\nWhile the sun shines bright, it sings by the tree."
+      ]
+    ]
+  },
+  "grounding": {
+    "status": "ok",
+    "reason": "",
+    "cos_prompt_chosen": 0.4685377776622772,
+    "cos_prompt_rejected": 0.5832348465919495,
+    "relevance_gap": -0.11469706892967224,
+    "frac_rejected_offtopic": 0.174
+  },
+  "shift": {
+    "status": "ok",
+    "reason": "",
+    "prompt_overlap_frac": 0.0,
+    "tests": {
+      "prompt": {
+        "status": "ok",
+        "reason": "",
+        "name": "prompt",
+        "mmd2": 0.00507162955581697,
+        "p_value": 0.004975124378109453,
+        "n_a": 2000,
+        "n_b": 2000,
+        "n_subsampled": 4000,
+        "gamma": 0.015282826498150826
+      },
+      "chosen": {
+        "status": "ok",
+        "reason": "",
+        "name": "chosen",
+        "mmd2": 0.00243140910520645,
+        "p_value": 0.004975124378109453,
+        "n_a": 2000,
+        "n_b": 2000,
+        "n_subsampled": 4000,
+        "gamma": 0.033348023891448975
+      },
+      "rejected": {
+        "status": "ok",
+        "reason": "",
+        "name": "rejected",
+        "mmd2": 0.0023802589634868143,
+        "p_value": 0.004975124378109453,
+        "n_a": 2000,
+        "n_b": 2000,
+        "n_subsampled": 4000,
+        "gamma": 0.01988670974969864
+      }
+    }
+  },
+  "near_dup": {
+    "status": "ok",
+    "reason": "",
+    "threshold": 0.95,
+    "n_train": 5,
+    "n_val": 0,
+    "n_cross": 3,
+    "rate_train": 1.460374206286619e-05,
+    "rate_cross": 2.724201808870001e-05,
+    "max_cross_cosine": 0.9837687611579895,
+    "nn_cosine_q50": 0.5898565649986267,
+    "nn_cosine_q95": 0.8670153230428695,
+    "n_compared": 828,
+    "n_capped_from": 0
+  },
+  "diversity": {
+    "status": "ok",
+    "reason": "",
+    "vendi_prompt": 125.16868591308594,
+    "vendi_chosen": 102.59070587158203,
+    "vendi_rejected": 139.7334747314453,
+    "n_rows": 2000,
+    "effective_sample_ratio": 0.06258434295654297,
+    "frac_isolated": 0.21859903381642512
+  },
+  "warnings": [
+    "SURFACE DIFFERS BY CONSTRUCTION  frac_surface_controlled=0.004 < 0.05. Chosen and rejected almost never share a format, so no slice can separate content from format.",
+    "EVEN THE SHORTCUT FREE SLICE IS EASY  separability_min=0.981 > 0.75. The task stays trivial after every confound is controlled.",
+    "SEMANTIC LEAKAGE  3 cross split near duplicate pairs at cosine > 0.95. Exact match checks miss these."
+  ]
+}

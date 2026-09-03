@@ -3,7 +3,7 @@ import math
 import random
 from dataclasses import dataclass, field, replace
 from typing import Optional, Sequence, Any, Literal
-from rlhf.core.contracts import ConfigError, DataError
+from rlhf.reward_model.core.contracts import ConfigError, DataError
 
 PairPolicy = Literal["all_pairs", "adjacent", "best_vs_rest"]
 UNASSIGNED_UID = -1

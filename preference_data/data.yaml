@@ -1,0 +1,29 @@
+# The honest prompt-level re-split of the rhyming preference data (train/val share 0 prompts).
+# Raw source lives OUTSIDE the repo: ../RL/projects/rhyming/data/preferences_{train,val}.json
+# Regenerate with:  python -m rlhf resplit --config preference_data/data.yaml \
+#     --set data.train_path=../RL/projects/rhyming/data/preferences_train.json \
+#     --set data.val_path=../RL/projects/rhyming/data/preferences_val.json
+run_name: real_data
+out_dir: preference_data/reports
+reports_dir: preference_data/reports
+
+data:
+  train_path: preference_data/train.jsonl
+  val_path: preference_data/val.jsonl
+  format: pairwise
+  prompt_field: prompt
+
+split:
+  val_frac: 0.10
+  method: hash
+  seed: 0
+
+resplit:
+  train_out: preference_data/train.jsonl
+  val_out: preference_data/val.jsonl
+
+profile:
+  max_samples: 2000
+  seed: 0
+  embed:
+    cache_dir: .cache/embeddings

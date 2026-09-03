@@ -28,7 +28,7 @@
       "model_id": "sentence-transformers/all-MiniLM-L6-v2",
       "dim": 384,
       "n_texts": 6000,
-      "n_unique": 10743,
+      "n_unique": 19181,
       "n_lookups": 6000,
       "n_cache_hits": 6000,
       "n_embedded": 0,

@@ -6,7 +6,7 @@ DATASET PROFILE   (tier 1: embeddings)
 
 ---- EMBEDDINGS  [ok] ------------------------------------------------------
   hf : sentence-transformers/all-MiniLM-L6-v2   dim 384
-  texts 6,000   unique cached 10,743     hits 6,000/6,000   embedded 0
+  texts 6,000   unique cached 19,181     hits 6,000/6,000   embedded 0
   mean_norm 5.084   effective_rank 57.5
 
 ---- SEPARABILITY  [ok] ----------------------------------------------------
