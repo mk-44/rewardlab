@@ -184,3 +184,9 @@ class RewardSection:
     reward_functions : Tuple[str, ...] = ()
     reward_wts : Tuple[float, ...] = ()
     normalize_reward_func_wts : bool = False
+
+
+@dataclass
+class HubSection:
+    repo_id : Optional[str] = None
+    private : bool = True

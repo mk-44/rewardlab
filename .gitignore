@@ -34,6 +34,7 @@ runs/
 
 # ── experiments: track config, ledger and reports. never the weights. ────────
 experiments/**/checkpoints/
+experiments/**/hub.json
 
 # ── data: track the splits, the config and the reports.
 #         never the raw generations or the topic lists — they are large,

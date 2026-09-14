@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Union, Literal, TYPE_CHECKING
 import torch
 from rlhf.core.contracts import ConfigError
+from rlhf.core.hub import HUB_SCHEME, parse_hub_uri, pull_run
 from rlhf.core.training.checkpoint import load_checkpoint
 from rlhf.reward.model.backbone import Backbone, Pooling
 from rlhf.reward.model.model import RewardModel
@@ -146,6 +147,12 @@ def from_run(
     which : str = "best",
     name : Optional[str] = None
 ) -> RewardModelScorer:
+
+    if str(run_dir).startswith(HUB_SCHEME):
+        repo_id, hub_path = parse_hub_uri(str(run_dir))
+        run_dir = Path(".cache") / "hub_runs" / hub_path
+        if not run_dir.is_dir():
+            pull_run(repo_id, hub_path, run_dir)
 
     root = Path(run_dir)
     if not root.is_dir():

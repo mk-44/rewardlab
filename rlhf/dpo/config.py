@@ -3,8 +3,9 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence, Literal
-from rlhf.core.config import DataConfig, ExecSection, RewardSection, apply_overrides, from_dict, load_yaml
+from rlhf.core.config import DataConfig, ExecSection, HubSection, RewardSection, apply_overrides, from_dict, load_yaml
 from rlhf.core.contracts import ConfigError
+from rlhf.core.hub import parse_repo_id
 from rlhf.core.scoring.rewards import load_reward_functions, resolve_reward_weights
 from rlhf.core.training.config import TrainConfig
 
@@ -53,6 +54,7 @@ class DPOConfig:
     execution : ExecSection = field(default_factory = ExecSection)
     inference : InferenceConfig = field(default_factory = InferenceConfig)
     reward : RewardSection = field(default_factory = RewardSection)
+    hub : HubSection = field(default_factory = HubSection)
 
     def tokenizer_name(self):
         if self.policy.tokenizer:
@@ -133,6 +135,9 @@ def validate(cfg : DPOConfig) -> None:
             f"reward.reward_wts has {len(r.reward_wts)} entries but "
             f"reward.reward_functions is empty"
         )
+
+    if cfg.hub.repo_id:
+        parse_repo_id(cfg.hub.repo_id)
 
 
 def load_dpo(path : Optional[str] = None, overrides : Sequence[str] = ()) -> DPOConfig:

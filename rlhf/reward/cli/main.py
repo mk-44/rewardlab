@@ -10,7 +10,8 @@ from typing import Optional, Sequence
 from rlhf.reward.config import AuditConfig, ProfileConfig, SplitConfig
 
 from rlhf.core.contracts import ConfigError
-from rlhf.core.config import DataConfig, ExecSection, apply_overrides, from_dict, load_yaml
+from rlhf.core.config import DataConfig, ExecSection, HubSection, apply_overrides, from_dict, load_yaml
+from rlhf.core.hub import hub_path_for, parse_repo_id, preflight, pull_run, push_run, render as render_hub, render_preflight
 from rlhf.reward.training.trainer import TrainConfig
 
 Pooling_choices = ("last", "mean", "cls")
@@ -48,6 +49,7 @@ class AppConfig:
     execution : ExecSection = field(default_factory = ExecSection)
     train : TrainConfig = field(default_factory = TrainConfig)
     resplit : ResplitOut = field(default_factory = ResplitOut)
+    hub : HubSection = field(default_factory = HubSection)
 
 
 def load_app(path : Optional[str] = None, overrides : Sequence[str] = ()) -> AppConfig:
@@ -55,6 +57,8 @@ def load_app(path : Optional[str] = None, overrides : Sequence[str] = ()) -> App
     apply_overrides(cfg, overrides)
     if cfg.model.pooling not in Pooling_choices:
         raise ConfigError(f"model.pooling must be one of {Pooling_choices}, got {cfg.model.pooling!r}")
+    if cfg.hub.repo_id:
+        parse_repo_id(cfg.hub.repo_id)
     return cfg
 
 
@@ -96,6 +100,33 @@ def _build_model(cfg : AppConfig):
 def _write(out_dir : Path, name : str, payload : dict) -> None:
     out_dir.mkdir(parents = True, exist_ok = True)
     (out_dir / name).write_text(json.dumps(payload, indent = 2, default = str) + "\n")
+
+
+def _hub_path(cfg : AppConfig) -> str:
+    return hub_path_for(cfg.out_dir, cfg.run_name)
+
+
+def _repo_id(cfg : AppConfig) -> str:
+    if not cfg.hub.repo_id:
+        raise ConfigError("hub.repo_id is not set. set it in the yaml or pass the hf repo id flag")
+    return cfg.hub.repo_id
+
+
+def _hub_preflight(cfg : AppConfig) -> None:
+    if cfg.hub.repo_id:
+        print(render_preflight(preflight(cfg.hub.repo_id, private = cfg.hub.private)))
+
+
+def _hub_push(cfg : AppConfig, action : str) -> int:
+    if not cfg.hub.repo_id:
+        return 0
+    try:
+        rep = push_run(Path(cfg.out_dir) / cfg.run_name, cfg.hub.repo_id, _hub_path(cfg), action = action)
+    except Exception as e:
+        print(f"hub push failed after {action} finished: {type(e).__name__}: {e}. the run is complete on disk. retry with the push verb and the same config", file = sys.stderr)
+        return 2
+    print(render_hub(rep))
+    return 0
 
 
 def cmd_resplit(cfg : AppConfig, args) -> int:
@@ -195,6 +226,7 @@ def cmd_train(cfg: AppConfig, args) -> int:
     val_store = _build_store(cfg, cfg.data.val_path, collator)
     model = _build_model(cfg)
     plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic)
+    _hub_preflight(cfg)
     logger = RunLogger(cfg.out_dir, cfg.run_name, is_main = plan.dist.is_main, mode = "resume" if args.resume else "new")
     logger.stamp("collate", collator.report.to_dict())
     from rlhf.core.preference.loaders import sha256_of
@@ -211,7 +243,7 @@ def cmd_train(cfg: AppConfig, args) -> int:
           f"final_acc={rep.final_accuracy:.4f}, "
           f"{'stopped early, ' if rep.early_stopped else ''}"
           f"{rep.wall_seconds:.1f}s -> {Path(cfg.out_dir) / cfg.run_name}")
-    return 0
+    return _hub_push(cfg, "train")
 
 
 def cmd_eval(cfg : AppConfig, args) -> int:
@@ -238,7 +270,7 @@ def cmd_eval(cfg : AppConfig, args) -> int:
     
     print(f"eval @ step {state['step']}: acc={o.accuracy:.4f} (se {o.accuracy_se:.4f}) "
           f"mean_margin={o.mean_margin:+.4f} n={result.n_pairs}")
-    return 0
+    return _hub_push(cfg, "eval")
 
 
 def cmd_ledger(cfg: AppConfig, args) -> int:
@@ -293,6 +325,20 @@ def cmd_ledger(cfg: AppConfig, args) -> int:
     return 0
 
 
+def cmd_push(cfg : AppConfig, args) -> int:
+    repo_id = _repo_id(cfg)
+    _hub_preflight(cfg)
+    rep = push_run(Path(cfg.out_dir) / cfg.run_name, repo_id, _hub_path(cfg), action = "push")
+    print(render_hub(rep))
+    return 0
+
+
+def cmd_pull(cfg : AppConfig, args) -> int:
+    rep = pull_run(_repo_id(cfg), _hub_path(cfg), Path(cfg.out_dir) / cfg.run_name)
+    print(render_hub(rep))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog = "rewardlab", description = "reward-model lab: data diagnostics and training")
     sub = p.add_subparsers(dest = "command", required = True)
@@ -309,11 +355,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.choices["eval"].add_argument("--which", default = "best", choices = ("best", "latest"))
     sub.choices["ledger"].add_argument("--audit-json", default = None)
     sub.choices["ledger"].add_argument("--profile-json", default = None)
+    for verb in ("train", "eval", "push", "pull"):
+        sub.choices[verb].add_argument("--hf-repo-id", dest = "hf_repo_id", default = None)
     return p
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "hf_repo_id", None):
+        args.overrides = [*args.overrides, f"hub.repo_id={args.hf_repo_id}"]
     try:
         cfg = load_app(args.config, args.overrides)
         return args.fn(cfg, args)
@@ -329,4 +379,6 @@ COMMANDS = {
     "train": cmd_train,
     "eval": cmd_eval,
     "ledger": cmd_ledger,
+    "push": cmd_push,
+    "pull": cmd_pull,
 }

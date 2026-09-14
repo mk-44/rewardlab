@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence, TYPE_CHECKING
 from rlhf.core.contracts import ConfigError, DataError
+from rlhf.core.hub import hub_path_for, preflight, pull_run, push_run, render as render_hub, render_preflight
 from rlhf.dpo.config import DPOConfig, load_dpo
 
 if TYPE_CHECKING:
@@ -21,6 +22,33 @@ def _run_dir(cfg : DPOConfig) -> Path:
 def _write(out_dir : Path, name : str, payload : dict) -> None:
     out_dir.mkdir(parents = True, exist_ok = True)
     (out_dir / name).write_text(json.dumps(payload, indent = 2, default = str) + "\n")
+
+
+def _hub_path(cfg : DPOConfig) -> str:
+    return hub_path_for(cfg.out_dir, cfg.run_name)
+
+
+def _repo_id(cfg : DPOConfig) -> str:
+    if not cfg.hub.repo_id:
+        raise ConfigError("hub.repo_id is not set. set it in the yaml or pass the hf repo id flag")
+    return cfg.hub.repo_id
+
+
+def _hub_preflight(cfg : DPOConfig) -> None:
+    if cfg.hub.repo_id:
+        print(render_preflight(preflight(cfg.hub.repo_id, private = cfg.hub.private)))
+
+
+def _hub_push(cfg : DPOConfig, action : str) -> int:
+    if not cfg.hub.repo_id:
+        return 0
+    try:
+        rep = push_run(_run_dir(cfg), cfg.hub.repo_id, _hub_path(cfg), action = action)
+    except Exception as e:
+        print(f"hub push failed after {action} finished: {type(e).__name__}: {e}. the run is complete on disk. retry with the push verb and the same config", file = sys.stderr)
+        return 2
+    print(render_hub(rep))
+    return 0
 
 
 def _require_data(cfg : DPOConfig, *splits : str):
@@ -167,6 +195,7 @@ def cmd_train(cfg : DPOConfig, args) -> int:
     plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic)
     train_pairs = _load_pairs(cfg, cfg.data.train_path, "train")
     val_pairs = _load_pairs(cfg, cfg.data.val_path, "val")
+    _hub_preflight(cfg)
 
     logger = RunLogger(cfg.out_dir, cfg.run_name, is_main = plan.dist.is_main, mode = "resume" if args.resume else "new")
     logger.stamp("config", to_flat_dict(cfg))
@@ -199,7 +228,7 @@ def cmd_train(cfg : DPOConfig, args) -> int:
     logger.close()
     print(render_train(rep))
     print(f"-> {_run_dir(cfg)}")
-    return 0
+    return _hub_push(cfg, "train")
 
 
 def cmd_eval(cfg : DPOConfig, args) -> int:
@@ -240,7 +269,7 @@ def cmd_eval(cfg : DPOConfig, args) -> int:
     payload = {"checkpoint" : str(src), "which" : args.which, "checkpoint_step" : state["step"], **rep.to_dict()}
     _write(_run_dir(cfg), "eval_report.json", payload)
     print(render_eval(rep))
-    return 0
+    return _hub_push(cfg, "eval")
 
 
 def cmd_export(cfg : DPOConfig, args) -> int:
@@ -272,6 +301,20 @@ def cmd_export(cfg : DPOConfig, args) -> int:
     
     print(f"export: step {state['step']} (best_metric {state['best_metric']}) -> {out}")
     print(f"        next leg: policy.model_ckpt: {out}   policy.model_name: null")
+    return _hub_push(cfg, "export")
+
+
+def cmd_push(cfg : DPOConfig, args) -> int:
+    repo_id = _repo_id(cfg)
+    _hub_preflight(cfg)
+    rep = push_run(_run_dir(cfg), repo_id, _hub_path(cfg), action = "push")
+    print(render_hub(rep))
+    return 0
+
+
+def cmd_pull(cfg : DPOConfig, args) -> int:
+    rep = pull_run(_repo_id(cfg), _hub_path(cfg), _run_dir(cfg))
+    print(render_hub(rep))
     return 0
 
 
@@ -280,6 +323,8 @@ COMMANDS = {
     "train" : cmd_train,
     "eval" : cmd_eval,
     "export" : cmd_export,
+    "push" : cmd_push,
+    "pull" : cmd_pull,
 }
 
 
@@ -298,11 +343,15 @@ def build_parser() -> argparse.ArgumentParser:
         sub.choices[verb].add_argument("--which", default = "best", choices = ("best", "latest"))
     sub.choices["export"].add_argument("--out", default = None)
     sub.choices["export"].add_argument("--force", action = "store_true")
+    for verb in ("train", "eval", "export", "push", "pull"):
+        sub.choices[verb].add_argument("--hf-repo-id", dest = "hf_repo_id", default = None)
     return p
 
 
 def main(argv : Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "hf_repo_id", None):
+        args.overrides = [*args.overrides, f"hub.repo_id={args.hf_repo_id}"]
     try:
         cfg = load_dpo(args.config, args.overrides)
         return args.fn(cfg, args)
