@@ -10,4 +10,4 @@ Direct DPO on base `gpt2` over the `rhyme_50k` pairs, no SFT leg. Every command 
 
 Outputs land in `experiments/dpo/non_sft_50k_data/run/`: `metrics.jsonl`, `console.log`, `checkpoints/`, `eval_report.json`, `export/`.
 
-The device is `execution.device` in `config.yaml`, set to `cuda`; change it there for another machine. The reward model scores on `RM_DEVICE` in `custom_functions/scores.py`, `cpu` unless you set it.
+The device is `execution.device` in `config.yaml`, set to `cuda`; change it there for another machine. The reward model scores on `RM_DEVICE` in `custom_reward_functions.py`, `cpu` unless you set it. Both reward functions live in that file; `config.yaml` names them as `<file>.py:<function>`.

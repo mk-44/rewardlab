@@ -1,8 +1,12 @@
 from __future__ import annotations
+import hashlib
 import importlib
+import importlib.util
 import inspect
 import math
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 from rlhf.core.contracts import ConfigError
 
@@ -159,13 +163,29 @@ def load_reward_functions(specs : Optional[Sequence[str]]) -> List[CustomRewardF
     out : List[CustomRewardFunction] = []
     for spec in (specs or []):
         if ":" not in spec:
-            raise ConfigError(f"reward function spec {spec!r} must be 'module.path:attribute', e.g. 'custom_functions.scores:my_score'")
+            raise ConfigError(f"reward function spec {spec!r} must be 'path/to/file.py:function' or 'module.path:attribute', e.g. 'experiments/my_run/custom_reward_functions.py:my_score'")
 
-        module_path, _, attr = spec.partition(":")
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError as e:
-            raise ConfigError(f"cannot import {module_path!r} for reward function {spec!r}: {e}. is the project root on sys.path?")
+        module_path, _, attr = spec.rpartition(":")
+        if module_path.endswith(".py"):
+            path = Path(module_path)
+            if not path.is_file():
+                raise ConfigError(f"reward function file not found: {module_path} (from spec {spec!r}). paths are relative to the working directory")
+            name = "rlhf_reward_functions_" + hashlib.sha256(str(path.resolve()).encode()).hexdigest()[: 12]
+            module = sys.modules.get(name)
+            if module is None:
+                loader_spec = importlib.util.spec_from_file_location(name, path.resolve())
+                module = importlib.util.module_from_spec(loader_spec)
+                sys.modules[name] = module
+                try:
+                    loader_spec.loader.exec_module(module)
+                except Exception as e:
+                    del sys.modules[name]
+                    raise ConfigError(f"{module_path} raised while loading (from spec {spec!r}): {type(e).__name__}: {e}")
+        else:
+            try:
+                module = importlib.import_module(module_path)
+            except ImportError as e:
+                raise ConfigError(f"cannot import {module_path!r} for reward function {spec!r}: {e}. is the project root on sys.path?")
 
         try:
             fn = getattr(module, attr)
