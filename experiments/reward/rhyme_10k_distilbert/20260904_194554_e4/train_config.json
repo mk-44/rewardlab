@@ -1,0 +1,17 @@
+{
+  "epochs": 4,
+  "batch_size": 16,
+  "accm_steps": 1,
+  "eval_batch_size": 128,
+  "lr": 3e-05,
+  "weight_decay": 0.01,
+  "sched": "cosine",
+  "warmup_steps": 100,
+  "clip_norm": 1.0,
+  "log_every": 50,
+  "eval_every": 243,
+  "early_stop_patience": 4,
+  "min_delta": 0.0,
+  "keep_last": 2,
+  "disable_dropout": true
+}

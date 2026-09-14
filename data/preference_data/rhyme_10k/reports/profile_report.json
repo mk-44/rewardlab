@@ -1,0 +1,422 @@
+{
+  "source": "preference_data/rhyme_10k/train.jsonl",
+  "n_pairs": 4000,
+  "n_sampled_from": 7769,
+  "health": {
+    "status": "ok",
+    "reason": "",
+    "backend": "hf",
+    "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    "dim": 384,
+    "n_texts": 12000,
+    "n_unique": 34870,
+    "n_lookups": 12000,
+    "n_cache_hits": 0,
+    "n_embedded": 11999,
+    "mean_norm": 5.818467617034912,
+    "frac_zero_vectors": 0.0,
+    "effective_rank": 28.10101097022126
+  },
+  "separability": {
+    "status": "ok",
+    "reason": "",
+    "frac_surface_controlled": 0.47925,
+    "separability_raw": 0.6050420168067226,
+    "separability_min": 0.5814863102998696,
+    "top_confound": "match_word_count",
+    "top_confound_drop": 0.023555706506853014,
+    "slices": {
+      "raw": {
+        "status": "ok",
+        "reason": "",
+        "name": "raw",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": null
+      },
+      "match_has_newline": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_has_newline",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_multi_line": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_multi_line",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_markdown_bold": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_bold",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_markdown_header": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_header",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_bullet_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_bullet_list",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_numbered_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_numbered_list",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_code_fence": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_code_fence",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_emoji": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_emoji",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_question_mark": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_question_mark",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_exclamation": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_exclamation",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_hedging": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_hedging",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_refusal": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_refusal",
+        "n_pairs": 3999,
+        "n_train": 3167,
+        "n_test": 832,
+        "acc": 0.6153846153846154,
+        "auc": 0.6560361963757396,
+        "drop_vs_raw": -0.01034259857789277
+      },
+      "match_ends_with_period": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_ends_with_period",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_has_comma": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_has_comma",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_repetitive": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_repetitive",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_char_length": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_char_length",
+        "n_pairs": 2541,
+        "n_train": 2002,
+        "n_test": 539,
+        "acc": 0.608534322820037,
+        "auc": 0.6550025643585146,
+        "drop_vs_raw": -0.0034923060133144057
+      },
+      "match_word_count": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_word_count",
+        "n_pairs": 3685,
+        "n_train": 2918,
+        "n_test": 767,
+        "acc": 0.5814863102998696,
+        "auc": 0.6213340721992082,
+        "drop_vs_raw": 0.023555706506853014
+      },
+      "match_newline_count": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_newline_count",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_punctuation": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_punctuation",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.6050420168067226,
+        "auc": 0.6346865276722934,
+        "drop_vs_raw": 0.0
+      },
+      "match_unique_word_ratio": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_unique_word_ratio",
+        "n_pairs": 3713,
+        "n_train": 2942,
+        "n_test": 771,
+        "acc": 0.5849546044098574,
+        "auc": 0.6239424938723944,
+        "drop_vs_raw": 0.02008741239686529
+      },
+      "match_avg_word_length": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_avg_word_length",
+        "n_pairs": 2364,
+        "n_train": 1863,
+        "n_test": 501,
+        "acc": 0.6067864271457086,
+        "auc": 0.6446269138369967,
+        "drop_vs_raw": -0.00174441033898598
+      },
+      "all_matched": {
+        "status": "ok",
+        "reason": "",
+        "name": "all_matched",
+        "n_pairs": 1917,
+        "n_train": 1520,
+        "n_test": 397,
+        "acc": 0.6372795969773299,
+        "auc": 0.6478627489546916,
+        "drop_vs_raw": -0.032237580170607294
+      }
+    }
+  },
+  "delta": {
+    "status": "ok",
+    "reason": "",
+    "n_pairs": 4000,
+    "mean_pairwise_cosine": 0.0008361746440641582,
+    "frac_aligned_with_mean": 0.60925,
+    "pc_explained_var": [
+      0.035852782154815126,
+      0.029232561342434522,
+      0.024072579301146497
+    ],
+    "effective_dim": 109.01390191198558,
+    "effective_dim_unit": 110.92493037630528,
+    "delta_norm_q05": 2.660676085948944,
+    "delta_norm_q50": 4.039008617401123,
+    "delta_norm_q95": 5.874871873855589,
+    "pc1_top": [
+      [
+        "storm clouds approach\nnatures fierce reproach",
+        "whispers of thunder\nshadows of rain"
+      ],
+      [
+        "white smoke rises high\nagainst the backdrop of the sky",
+        "white smoke dances against blue\nwhispers of secrets and unseen truths"
+      ],
+      [
+        "spine bent with age\nmildew creeping turning the page",
+        "aged pages softly whisper\nmildewed book spine memories linger"
+      ],
+      [
+        "threads of carpet skitter and fray\nwherever they go they do not stay",
+        "thread unravels like a whispered secret\nrevealing the hidden stories beneath our feet"
+      ],
+      [
+        "cutting board hung tight\ndoor creaked open in the night",
+        "splintered echoes of chopping\nwhispers of meals made with love"
+      ]
+    ],
+    "pc1_bottom": [
+      [
+        "static whispers on the air\nechoes of a love lost in despair",
+        "static crackles signal fades\nlost in the ether lost in the waves"
+      ],
+      [
+        "lost in the wind\nwhispers of memories left behind",
+        "abandoned leaf spinning down\nfalling gently to the ground"
+      ],
+      [
+        "liners tolling in the night\ntheir haunting melodies taking flight",
+        "metal grinding against metal\nliners tolling the price of passage"
+      ],
+      [
+        "years of sun and rain\nwhisper tales of old pain",
+        "time has left its mark\non this weathered fencepost slat"
+      ],
+      [
+        "soft flakes whisper dance to earth\ncovered in silence a rebirth",
+        "soft flakes fall gently\ncovering the world in pure white"
+      ]
+    ]
+  },
+  "grounding": {
+    "status": "ok",
+    "reason": "",
+    "cos_prompt_chosen": 0.6469244360923767,
+    "cos_prompt_rejected": 0.65552818775177,
+    "relevance_gap": -0.00860375165939331,
+    "frac_rejected_offtopic": 0.0155
+  },
+  "shift": {
+    "status": "ok",
+    "reason": "",
+    "prompt_overlap_frac": 0.0,
+    "tests": {
+      "prompt": {
+        "status": "approximate",
+        "reason": "subsampled to 3950",
+        "name": "prompt",
+        "mmd2": -0.00010728408638394082,
+        "p_value": 0.9950248756218906,
+        "n_a": 4000,
+        "n_b": 1950,
+        "n_subsampled": 3950,
+        "gamma": 0.011369003914296627
+      },
+      "chosen": {
+        "status": "approximate",
+        "reason": "subsampled to 3950",
+        "name": "chosen",
+        "mmd2": -3.87954633694898e-05,
+        "p_value": 0.7412935323383084,
+        "n_a": 4000,
+        "n_b": 1950,
+        "n_subsampled": 3950,
+        "gamma": 0.02274870127439499
+      },
+      "rejected": {
+        "status": "approximate",
+        "reason": "subsampled to 3950",
+        "name": "rejected",
+        "mmd2": -5.884073827622238e-05,
+        "p_value": 0.835820895522388,
+        "n_a": 4000,
+        "n_b": 1950,
+        "n_subsampled": 3950,
+        "gamma": 0.022589802742004395
+      }
+    }
+  },
+  "near_dup": {
+    "status": "ok",
+    "reason": "",
+    "threshold": 0.95,
+    "n_train": 2,
+    "n_val": 0,
+    "n_cross": 2,
+    "rate_train": 2.500625156289072e-07,
+    "rate_cross": 2.564102564102564e-07,
+    "max_cross_cosine": 0.9579187631607056,
+    "nn_cosine_q50": 0.568426102399826,
+    "nn_cosine_q95": 0.7492755651473999,
+    "n_compared": 4000,
+    "n_capped_from": 0
+  },
+  "diversity": {
+    "status": "ok",
+    "reason": "",
+    "vendi_prompt": 131.3303680419922,
+    "vendi_chosen": 89.24351501464844,
+    "vendi_rejected": 87.80903625488281,
+    "n_rows": 4000,
+    "effective_sample_ratio": 0.03283259201049805,
+    "frac_isolated": 0.226
+  },
+  "warnings": [
+    "SEMANTIC LEAKAGE  2 cross split near duplicate pairs at cosine > 0.95. Exact match checks miss these.",
+    "LOW DIVERSITY  effective_sample_ratio=0.033. 4,000 rows are really ~131 distinct examples."
+  ]
+}

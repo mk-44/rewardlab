@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rewardlab"
+version = "0.1.0"
+description = "A from-scratch RLHF stack: reward models, DPO, PPO and GRPO, built to be inspected"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Mayank Keshari" }]
+keywords = ["rlhf", "reward-model", "dpo", "ppo", "grpo", "preference-learning"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "torch>=2.3.0",
+  "transformers>=4.44.0",
+  "tokenizers>=0.19.0",
+  "numpy>=1.26.0",
+  "pyyaml>=6.0",
+  "scipy>=1.11.0",
+]
+
+[project.optional-dependencies]
+data = ["datasets>=2.20.0", "pandas>=2.0.0", "sentencepiece>=0.2.0", "protobuf>=4.25.0"]
+openai = ["openai>=1.0.0"]
+rhyme = ["pronouncing>=0.2.0"]
+dev = ["pytest>=8.0.0", "pytest-cov>=5.0.0", "ruff>=0.6.0"]
+
+[project.scripts]
+rewardlab = "rlhf.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/mk-44/rewardlab"
+
+[tool.setuptools.packages.find]
+include = ["rlhf*"]
+exclude = ["tests*", "notebooks*", "rough_work*", "scripts*", "experiments*", "data*", "plans*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# importlib import mode: tests/ mirrors rlhf/, so the same basename recurs in
+# different method folders (reward/config_test.py, dpo/config_test.py). The
+# default "prepend" mode imports both as top-level `config_test` and the second
+# collides. importlib gives each file a unique module identity and needs no
+# __init__.py littered through the test tree.
+addopts = "-q --import-mode=importlib"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+markers = [
+  "real: needs real pretrained weights (downloads gpt2 on first run); deselect with -m 'not real'",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+exclude = ["notebooks", "rough_work", "venv", ".cache", "experiments", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E203", "E501", "E731"]

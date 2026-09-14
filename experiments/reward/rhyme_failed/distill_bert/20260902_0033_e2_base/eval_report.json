@@ -1,0 +1,21 @@
+{
+  "checkpoint_step": 1000,
+  "overall": {
+    "n_pairs": 6289,
+    "accuracy": 0.9996820092201233,
+    "accuracy_se": 0.0002248264508826236,
+    "frac_ties": 0.0,
+    "mean_margin": 12.628349304199219,
+    "p10_margin": 9.730216979980469,
+    "median_margin": 13.132304191589355,
+    "p90_margin": 14.836562156677246,
+    "mean_chosen": 6.233480453491211,
+    "mean_rejected": -6.39486837387085,
+    "abs_reward_max": 8.483291625976562,
+    "mean_loss": 0.00195843237452209
+  },
+  "slices": {},
+  "n_pairs": 6289,
+  "n_batches": 99,
+  "seconds": 19.713860291000003
+}

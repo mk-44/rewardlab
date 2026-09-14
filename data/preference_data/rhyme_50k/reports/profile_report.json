@@ -1,0 +1,422 @@
+{
+  "source": "preference_data/rhyme_50k/train.jsonl",
+  "n_pairs": 4000,
+  "n_sampled_from": 31488,
+  "health": {
+    "status": "ok",
+    "reason": "",
+    "backend": "hf",
+    "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    "dim": 384,
+    "n_texts": 12000,
+    "n_unique": 51267,
+    "n_lookups": 12000,
+    "n_cache_hits": 1453,
+    "n_embedded": 10547,
+    "mean_norm": 5.7892231941223145,
+    "frac_zero_vectors": 0.0,
+    "effective_rank": 32.36983020243996
+  },
+  "separability": {
+    "status": "ok",
+    "reason": "",
+    "frac_surface_controlled": 0.468,
+    "separability_raw": 0.5774309723889556,
+    "separability_min": 0.5469061876247505,
+    "top_confound": "match_avg_word_length",
+    "top_confound_drop": 0.03052478476420506,
+    "slices": {
+      "raw": {
+        "status": "ok",
+        "reason": "",
+        "name": "raw",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": null
+      },
+      "match_has_newline": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_has_newline",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_multi_line": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_multi_line",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_markdown_bold": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_bold",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_markdown_header": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_markdown_header",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_bullet_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_bullet_list",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_numbered_list": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_numbered_list",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_code_fence": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_code_fence",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_emoji": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_emoji",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_question_mark": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_question_mark",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_exclamation": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_exclamation",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_hedging": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_hedging",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_refusal": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_refusal",
+        "n_pairs": 3998,
+        "n_train": 3167,
+        "n_test": 831,
+        "acc": 0.5631768953068592,
+        "auc": 0.5944934625615985,
+        "drop_vs_raw": 0.014254077082096361
+      },
+      "match_ends_with_period": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_ends_with_period",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_has_comma": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_has_comma",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_repetitive": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_repetitive",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_char_length": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_char_length",
+        "n_pairs": 2573,
+        "n_train": 2027,
+        "n_test": 546,
+        "acc": 0.5695970695970696,
+        "auc": 0.6074447530491487,
+        "drop_vs_raw": 0.007833902791886005
+      },
+      "match_word_count": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_word_count",
+        "n_pairs": 3695,
+        "n_train": 2928,
+        "n_test": 767,
+        "acc": 0.5984354628422425,
+        "auc": 0.627744186955731,
+        "drop_vs_raw": -0.021004490453286895
+      },
+      "match_newline_count": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_newline_count",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_punctuation": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_punctuation",
+        "n_pairs": 4000,
+        "n_train": 3167,
+        "n_test": 833,
+        "acc": 0.5774309723889556,
+        "auc": 0.6064990221778988,
+        "drop_vs_raw": 0.0
+      },
+      "match_unique_word_ratio": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_unique_word_ratio",
+        "n_pairs": 3677,
+        "n_train": 2913,
+        "n_test": 764,
+        "acc": 0.5680628272251309,
+        "auc": 0.6020839615142128,
+        "drop_vs_raw": 0.00936814516382467
+      },
+      "match_avg_word_length": {
+        "status": "ok",
+        "reason": "",
+        "name": "match_avg_word_length",
+        "n_pairs": 2358,
+        "n_train": 1857,
+        "n_test": 501,
+        "acc": 0.5469061876247505,
+        "auc": 0.5804996792841463,
+        "drop_vs_raw": 0.03052478476420506
+      },
+      "all_matched": {
+        "status": "ok",
+        "reason": "",
+        "name": "all_matched",
+        "n_pairs": 1872,
+        "n_train": 1484,
+        "n_test": 388,
+        "acc": 0.5592783505154639,
+        "auc": 0.577791210543097,
+        "drop_vs_raw": 0.018152621873491648
+      }
+    }
+  },
+  "delta": {
+    "status": "ok",
+    "reason": "",
+    "n_pairs": 4000,
+    "mean_pairwise_cosine": 0.0005876050563529134,
+    "frac_aligned_with_mean": 0.6125,
+    "pc_explained_var": [
+      0.03323576693498523,
+      0.02604639163527046,
+      0.023831100408570106
+    ],
+    "effective_dim": 116.36124574932684,
+    "effective_dim_unit": 118.07150609512335,
+    "delta_norm_q05": 2.6150763988494874,
+    "delta_norm_q50": 4.05300498008728,
+    "delta_norm_q95": 6.025741076469421,
+    "pc1_top": [
+      [
+        "weathered flyers rest crumpled and worn\nmessages faded their purpose forlorn",
+        "forgotten dreams flutter in the wind\na story untold waiting to begin"
+      ],
+      [
+        "pitter patter of raindrops fall\nin the deep forest natures call",
+        "whispers of raindrops dancing on leaves\nnatures lullaby a symphony of peace"
+      ],
+      [
+        "cutting board hung tight\ndoor creaked open in the night",
+        "splintered echoes of chopping\nwhispers of meals made with love"
+      ],
+      [
+        "miso ripening in rain\numami flavors crimson stain",
+        "umami whispers rise\nmiso ripening in rains embrace"
+      ],
+      [
+        "invisible tendrils cling\nlingering scent of everything",
+        "a lingering scent\nof dreams fading away"
+      ]
+    ],
+    "pc1_bottom": [
+      [
+        "whispers of smoke rise\nawakening the senses so wise",
+        "beans sizzle and crack\naromatic clouds envelop the room"
+      ],
+      [
+        "whispers of stories etched in grain\nsilent witness to joy and pain",
+        "weathered wooden bench\ntells stories of time passed on its worn out planks"
+      ],
+      [
+        "crushed cans whisper tales of thirst\nechoes of fizz memories dispersed",
+        "soda cans all crunched and flat\nrecycled now no turning back"
+      ],
+      [
+        "colorful patterns dance\nin synchronized traffic trance",
+        "green turns to yellow\nred halts the flow"
+      ],
+      [
+        "splintered and worn\nmemories of laughter and scorn",
+        "scars and graffiti etched\non battered lunchroom tables"
+      ]
+    ]
+  },
+  "grounding": {
+    "status": "ok",
+    "reason": "",
+    "cos_prompt_chosen": 0.6397192478179932,
+    "cos_prompt_rejected": 0.6489233374595642,
+    "relevance_gap": -0.009204089641571045,
+    "frac_rejected_offtopic": 0.013
+  },
+  "shift": {
+    "status": "ok",
+    "reason": "",
+    "prompt_overlap_frac": 0.0,
+    "tests": {
+      "prompt": {
+        "status": "approximate",
+        "reason": "subsampled to 4000",
+        "name": "prompt",
+        "mmd2": -4.8276103521427416e-05,
+        "p_value": 0.8159203980099502,
+        "n_a": 4000,
+        "n_b": 4000,
+        "n_subsampled": 4000,
+        "gamma": 0.011256415396928787
+      },
+      "chosen": {
+        "status": "approximate",
+        "reason": "subsampled to 4000",
+        "name": "chosen",
+        "mmd2": -6.62822805408414e-05,
+        "p_value": 0.8855721393034826,
+        "n_a": 4000,
+        "n_b": 4000,
+        "n_subsampled": 4000,
+        "gamma": 0.022403821349143982
+      },
+      "rejected": {
+        "status": "approximate",
+        "reason": "subsampled to 4000",
+        "name": "rejected",
+        "mmd2": -5.382762270644825e-05,
+        "p_value": 0.8059701492537313,
+        "n_a": 4000,
+        "n_b": 4000,
+        "n_subsampled": 4000,
+        "gamma": 0.022204460576176643
+      }
+    }
+  },
+  "near_dup": {
+    "status": "ok",
+    "reason": "",
+    "threshold": 0.95,
+    "n_train": 1,
+    "n_val": 1,
+    "n_cross": 2,
+    "rate_train": 1.250312578144536e-07,
+    "rate_cross": 1.25e-07,
+    "max_cross_cosine": 0.9736656546592712,
+    "nn_cosine_q50": 0.5487553477287292,
+    "nn_cosine_q95": 0.7137115001678467,
+    "n_compared": 4000,
+    "n_capped_from": 0
+  },
+  "diversity": {
+    "status": "ok",
+    "reason": "",
+    "vendi_prompt": 140.16236877441406,
+    "vendi_chosen": 97.03116607666016,
+    "vendi_rejected": 96.06085968017578,
+    "n_rows": 4000,
+    "effective_sample_ratio": 0.03504059219360352,
+    "frac_isolated": 0.275
+  },
+  "warnings": [
+    "SEMANTIC LEAKAGE  2 cross split near duplicate pairs at cosine > 0.95. Exact match checks miss these.",
+    "LOW DIVERSITY  effective_sample_ratio=0.035. 4,000 rows are really ~140 distinct examples."
+  ]
+}

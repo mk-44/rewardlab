@@ -1,0 +1,332 @@
+{
+  "source": "data/preference_data/rhyme_10k/train.jsonl",
+  "expected_ceiling": 0.75,
+  "structure": {
+    "n_groups": 7769,
+    "n_pairs": 7769,
+    "n_unique_prompts": 7769,
+    "k_histogram": {
+      "2": 7769
+    },
+    "n_exact_duplicates": 0,
+    "n_identical_sides": 0,
+    "n_all_tied": 0,
+    "n_empty_response": 0,
+    "slice_keys": {
+      "domain": 25,
+      "len_bucket": 5,
+      "near_miss": 4
+    },
+    "leakage_prompts": 0,
+    "leakage_rate": 0.0
+  },
+  "lengths": {
+    "chosen": {
+      "q05": 48.0,
+      "q50": 71.0,
+      "q95": 97.0
+    },
+    "rejected": {
+      "q05": 48.0,
+      "q50": 71.0,
+      "q95": 98.0
+    },
+    "p_longer_wins": 0.4725189857124469,
+    "frac_near_equal": 0.6359891877976573
+  },
+  "lexical": {
+    "accuracy": 0.694980694980695,
+    "status": "ok",
+    "reason": "",
+    "n_train_pairs": 6215,
+    "n_test_pairs": 1554,
+    "vocab_size": 7724,
+    "top_chosen": [
+      [
+        "pledge",
+        3.04
+      ],
+      [
+        "everywhere",
+        2.94
+      ],
+      [
+        "rhyme",
+        2.89
+      ],
+      [
+        "compare",
+        2.7
+      ],
+      [
+        "despair",
+        2.7
+      ],
+      [
+        "rare",
+        2.56
+      ],
+      [
+        "plight",
+        2.39
+      ],
+      [
+        "fray",
+        2.39
+      ],
+      [
+        "dear",
+        2.39
+      ],
+      [
+        "disappear",
+        2.3
+      ],
+      [
+        "different",
+        2.3
+      ],
+      [
+        "theyre",
+        2.19
+      ],
+      [
+        "affair",
+        2.19
+      ],
+      [
+        "happy",
+        2.19
+      ],
+      [
+        "yawn",
+        2.08
+      ],
+      [
+        "yesterday",
+        2.08
+      ],
+      [
+        "demand",
+        2.08
+      ],
+      [
+        "forlorn",
+        1.94
+      ],
+      [
+        "daze",
+        1.94
+      ],
+      [
+        "persistence",
+        1.94
+      ]
+    ],
+    "top_rejected": [
+      [
+        "again",
+        -2.84
+      ],
+      [
+        "content",
+        -2.64
+      ],
+      [
+        "defiance",
+        -2.4
+      ],
+      [
+        "facade",
+        -2.31
+      ],
+      [
+        "tomorrow",
+        -2.08
+      ],
+      [
+        "brilliance",
+        -2.08
+      ],
+      [
+        "theyve",
+        -2.08
+      ],
+      [
+        "unravels",
+        -2.08
+      ],
+      [
+        "begotten",
+        -1.95
+      ],
+      [
+        "offering",
+        -1.95
+      ],
+      [
+        "awe",
+        -1.95
+      ],
+      [
+        "mourning",
+        -1.8
+      ],
+      [
+        "aloft",
+        -1.8
+      ],
+      [
+        "roams",
+        -1.8
+      ],
+      [
+        "follows",
+        -1.8
+      ],
+      [
+        "these",
+        -1.8
+      ],
+      [
+        "rescind",
+        -1.8
+      ],
+      [
+        "atmosphere",
+        -1.8
+      ],
+      [
+        "shone",
+        -1.8
+      ],
+      [
+        "stretches",
+        -1.8
+      ]
+    ],
+    "note": "Naive Bayes is a weak model so this is a LOWER BOUND. A high value is decisive. A low value proves nothing."
+  },
+  "baselines": {
+    "char_length": 0.4998069249581671,
+    "word_count": 0.5189213540996267,
+    "newline_count": 0.5,
+    "punctuation": 0.5,
+    "unique_word_ratio": 0.5076586433260394,
+    "avg_word_length": 0.4881580641009139,
+    "lexical_nb": 0.694980694980695
+  },
+  "surface": [
+    {
+      "name": "refusal",
+      "p_chosen": 0.00012871669455528383,
+      "p_rejected": 0.00025743338911056766,
+      "gap": -0.00012871669455528383,
+      "chi2": 0.33339770410900116
+    },
+    {
+      "name": "has_newline",
+      "p_chosen": 1.0,
+      "p_rejected": 1.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "multi_line",
+      "p_chosen": 1.0,
+      "p_rejected": 1.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "markdown_bold",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "markdown_header",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "bullet_list",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "numbered_list",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "code_fence",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "emoji",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "question_mark",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "exclamation",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "hedging",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "ends_with_period",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "has_comma",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    },
+    {
+      "name": "repetitive",
+      "p_chosen": 0.0,
+      "p_rejected": 0.0,
+      "gap": 0.0,
+      "chi2": 0.0
+    }
+  ],
+  "baseline_acc_best": 0.694980694980695,
+  "baseline_acc_best_name": "lexical_nb",
+  "baseline_acc_best_direction": "normal",
+  "lexical_sep_acc": 0.694980694980695,
+  "lexical_sep_status": "ok",
+  "warnings": []
+}

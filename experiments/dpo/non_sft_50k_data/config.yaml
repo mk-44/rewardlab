@@ -1,0 +1,64 @@
+run_name: run
+out_dir: experiments/dpo/non_sft_50k_data
+
+data:
+  train_path: data/preference_data/rhyme_50k/train.jsonl
+  val_path: data/preference_data/rhyme_50k/val.jsonl
+  format: pairwise
+  json_key: null
+  slice_keys: [domain, len_bucket, near_miss, batch]
+  max_drop_rate: 0.05
+  prompt_field: prompt
+
+policy:
+  model_name: gpt2
+  model_ckpt: null
+  tokenizer: ""
+  max_length: 100
+  template: "{prompt}\n{response}"
+  append_eos: true
+
+reference:
+  reference_ckpt: null
+  precomputed_logp_path: experiments/dpo/non_sft_50k_data/cache/ref_train.pt
+  precomputed_val_logp_path: experiments/dpo/non_sft_50k_data/cache/ref_val.pt
+
+loss:
+  beta: 0.1
+  length_norm: sum
+  sft_wt: 0.0
+
+train:
+  epochs: 2
+  batch_size: 16
+  accm_steps: 2
+  eval_batch_size: 64
+  lr: 0.000005
+  weight_decay: 0.0
+  sched: cosine
+  warmup_steps: 150
+  clip_norm: 1.0
+  log_every: 50
+  eval_every: 500
+  early_stop_patience: 10
+  min_delta: 0.0
+  keep_last: 2
+  disable_dropout: true
+
+inference:
+  num_samples_per_prompt: 4
+  temperature: 1.0
+  top_p: 0.95
+  max_new_tokens: 24
+  eval_prompts: 16
+
+reward:
+  reward_functions: ["custom_functions.scores:reward_model", "custom_functions.scores:rhyme_rate"]
+  reward_wts: [0.9, 0.1]
+  normalize_reward_func_wts: false
+
+execution:
+  device: cuda
+  dtype: float32
+  seed: 0
+  deterministic: false

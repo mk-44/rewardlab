@@ -1,0 +1,32 @@
+run_name: run
+out_dir: experiments/reward/rhyme_failed/distill_bert
+
+data:
+  train_path: data/preference_data/rhyme_failed/train.jsonl
+  val_path: data/preference_data/rhyme_failed/val.jsonl
+  format: pairwise
+
+model:
+  backbone: distilbert-base-uncased
+  pooling: mean
+  max_length: 128
+
+train:
+  epochs: 2
+  batch_size: 16
+  accm_steps: 1
+  eval_batch_size: 64
+  lr: 0.00002
+  weight_decay: 0.01
+  sched: cosine
+  warmup_steps: 200
+  clip_norm: 1.0
+  log_every: 50
+  eval_every: 500
+  early_stop_patience: 4
+  keep_last: 2
+
+execution:
+  device: mps
+  dtype: float32
+  seed: 0

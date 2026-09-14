@@ -1,0 +1,16 @@
+{
+  "backbone": {
+    "model_name": "distilbert-base-uncased",
+    "custom": false,
+    "pooling": "mean",
+    "hidden_size": 768,
+    "n_params": 66362880,
+    "n_trainable": 66362880,
+    "frozen": false,
+    "gradient_checkpointing": false
+  },
+  "head_hidden_size": 768,
+  "head_bias": false,
+  "n_params": 66363648,
+  "n_trainable": 66363648
+}

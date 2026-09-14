@@ -1,0 +1,6 @@
+{
+  "train_path": "preference_data/rhyme_50k/train.jsonl",
+  "val_path": "preference_data/rhyme_50k/val.jsonl",
+  "train_sha256": "2458caed715e318c4577d6513d9ab0264b862690aff2076a19480050dcf806fb",
+  "val_sha256": "59ffd24cfca26a61631970f48aeb912d64c747f413ecda6965f898d2f325d24b"
+}

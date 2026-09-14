@@ -1,0 +1,51 @@
+# ── secrets — never, under any circumstance ──────────────────────────────────
+.env
+*.env
+.env.*
+!.env.example
+
+# ── local working areas, not shipped ─────────────────────────────────────────
+notebooks/
+rough_work/
+tests/
+plans/
+*.txt
+venv/
+.venv/
+
+# ── python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── model artifacts: never tracked, anywhere ─────────────────────────────────
+checkpoints/
+*.pt
+*.safetensors
+*.npz
+logs/
+runs/
+
+# ── experiments: track config, ledger and reports. never the weights. ────────
+experiments/**/checkpoints/
+
+# ── data: track the splits, the config and the reports.
+#         never the raw generations or the topic lists — they are large,
+#         regenerable from scripts/, and not part of the finding.
+data/**/raw_generations.json
+data/**/topics.json
+data/**/*.jsonl.gz
+
+# ── caches ───────────────────────────────────────────────────────────────────
+.cache/
+
+# ── os / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

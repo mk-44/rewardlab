@@ -1,0 +1,14 @@
+{
+  "lr": 2e-05,
+  "weight_decay": 0.01,
+  "betas": [
+    0.9,
+    0.999
+  ],
+  "eps": 1e-08,
+  "n_decay_tensors": 39,
+  "n_decay_params": 66302208,
+  "n_no_decay_tensors": 62,
+  "n_no_decay_params": 61440,
+  "n_frozen_excluded": 0
+}

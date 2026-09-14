@@ -1,0 +1,24 @@
+run_name: rhyme_10k
+out_dir: data/preference_data/rhyme_10k/reports
+reports_dir: data/preference_data/rhyme_10k/reports
+
+data:
+  train_path: data/preference_data/rhyme_10k/train.jsonl
+  val_path: data/preference_data/rhyme_10k/val.jsonl
+  format: pairwise
+  prompt_field: prompt
+  slice_keys: [domain, len_bucket, near_miss]
+
+split:
+  val_frac: 0.2
+  method: hash
+  seed: 0
+
+audit:
+  expected_ceiling: 0.75
+
+profile:
+  max_samples: 4000
+  seed: 0
+  embed:
+    cache_dir: .cache/embeddings

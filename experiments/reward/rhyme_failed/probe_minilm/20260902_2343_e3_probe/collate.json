@@ -1,0 +1,11 @@
+{
+  "tokenizer": "sentence-transformers/all-MiniLM-L6-v2",
+  "template": "{response}",
+  "max_length": 512,
+  "pad_token_added": false,
+  "n_pairs": 0,
+  "n_truncated_chosen": 0,
+  "n_truncated_rejected": 0,
+  "max_len_seen_chosen": 0,
+  "max_len_seen_rejected": 0
+}
