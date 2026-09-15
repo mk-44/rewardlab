@@ -229,6 +229,7 @@ def evaluate_generations(
     batch_size : int = 8,
     seed : Optional[int] = None,
     n_examples : int = 4,
+    head_tpl : str = "{prompt}",
 ) -> GenerationMetrics:
     if len(prompts) < 1:
         raise ConfigError(f"Pass atleats 1 prompt, currently {len(prompts)} prompts passed")
@@ -238,6 +239,9 @@ def evaluate_generations(
     
     if num_samples_per_prompt < 1:
         raise ConfigError(f"num_samples_per_prompt must be >= 1, got {num_samples_per_prompt}")
+
+    if "{prompt}" not in head_tpl:
+        raise ConfigError(f"head_tpl must contain {{prompt}} got {head_tpl!r}")
     
     
     was_train = policy_model.training
@@ -248,7 +252,8 @@ def evaluate_generations(
         policy_model.eval()
         for i in range(0, len(prompts), batch_size):
             batch = list(prompts[i : i + batch_size])
-            out = generate(policy_model, tokenizer, batch, num_samples_per_prompt, temperature, top_p, max_new_tokens, seed)
+            heads = [head_tpl.format(prompt = p) for p in batch]
+            out = generate(policy_model, tokenizer, heads, num_samples_per_prompt, temperature, top_p, max_new_tokens, seed)
             for pr, res_list in zip(batch, out):
                 for res in res_list:
                     prompts_flat.append(pr)
@@ -312,7 +317,8 @@ def evaluate(
             temperature = inf_config.temperature,
             top_p = inf_config.top_p,
             max_new_tokens = inf_config.max_new_tokens,
-            seed = seed
+            seed = seed,
+            head_tpl = cfg.policy.template.split("{response}")[0]
         )
     return report
 
