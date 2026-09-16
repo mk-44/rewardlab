@@ -165,18 +165,25 @@ class BaseScorer:
         return out
 
     @torch.no_grad()
-    def logps(self, prompts : Sequence[str], responses : Sequence[str]) -> List[float]:
-        out : List[float] = []
+    def logps(self, prompts : Sequence[str], responses : Sequence[str]) -> Tuple[List[float], List[float]]:
+        total : List[float] = []
+        last : List[float] = []
         bs = self.batch_size
         for i in range(0, len(prompts), bs):
             enc = [self.encode(p, r) for p, r in zip(prompts[i : i + bs], responses[i : i + bs])]
-            ids, att, _ = self._pad([p + r for p, r in enc])
+            ids, att, ends = self._pad([p + r for p, r in enc])
             comp = torch.zeros_like(ids)
             for j, (p, r) in enumerate(enc):
                 comp[j, len(p) : len(p) + len(r)] = 1
-            lp = sequence_logprobs(self.model, ids.to(self.device), att.to(self.device), comp.to(self.device), "sum")
-            out.extend(lp.float().cpu().tolist())
-        return out
+            ids, att, comp = ids.to(self.device), att.to(self.device), comp.to(self.device)
+            logits = self.model(input_ids = ids, attention_mask = att).logits
+            lp = sequence_logprobs(self.model, ids, att, comp, "sum", logits)
+            rows = torch.arange(len(enc), device = ids.device)
+            pos = torch.tensor(ends, dtype = torch.long, device = ids.device)
+            end_logp = torch.log_softmax(logits[rows, pos - 1].float(), dim = -1)[rows, ids[rows, pos]]
+            total.extend(lp.float().cpu().tolist())
+            last.extend(end_logp.cpu().tolist())
+        return total, last
 
 
 @dataclass
@@ -189,6 +196,7 @@ class BuildReport:
     skipped_chosen_not_rhyme : int = 0
     skipped_no_candidates : int = 0
     skipped_gap : int = 0
+    skipped_eos : int = 0
     widened_band : int = 0
     kept_chosen : int = 0
     rows_out : int = 0
@@ -196,6 +204,7 @@ class BuildReport:
     mean_gap : float = 0.0
     median_gap : float = 0.0
     frac_rejected_more_likely : float = 0.0
+    mean_eos_gap : float = 0.0
     near_miss : Dict[str, int] = field(default_factory = dict)
     top_replacements : List[Tuple[str, int]] = field(default_factory = list)
     seconds : float = 0.0
@@ -247,18 +256,23 @@ def build_split(rows : Sequence[dict], pool : Pool, scorer : BaseScorer, args, s
         for w in picked:
             prompts.append(r["prompt"])
             texts.append(replace_end(lines, w))
-    lp = scorer.logps(prompts, texts) if texts else []
+    lp, lp_end = scorer.logps(prompts, texts) if texts else ([], [])
 
-    out, gaps = [], []
+    out, gaps, eos_gaps = [], [], []
     nm : collections.Counter = collections.Counter()
     reps : collections.Counter = collections.Counter()
     pos = 0
     for (r, lines, chosen, w1, w2, cands), picked in zip(work, shortlist):
-        lp_c = lp[pos]
+        lp_c, end_c = lp[pos], lp_end[pos]
         lp_r = lp[pos + 1 : pos + 1 + len(picked)]
+        end_r = lp_end[pos + 1 : pos + 1 + len(picked)]
         pos += 1 + len(picked)
         order = sorted(range(len(picked)), key = lambda j : (-lp_r[j], picked[j]))
-        keep = [j for j in order if lp_r[j] >= lp_c - args.max_gap][: args.negatives]
+        closes = [j for j in order if not scorer.append_eos or end_r[j] >= end_c - args.eos_gap]
+        if len(closes) < args.negatives:
+            rep.skipped_eos += 1
+            continue
+        keep = [j for j in closes if lp_r[j] >= lp_c - args.max_gap][: args.negatives]
         if len(keep) < args.negatives:
             rep.skipped_gap += 1
             continue
@@ -281,8 +295,11 @@ def build_split(rows : Sequence[dict], pool : Pool, scorer : BaseScorer, args, s
                 "batch" : args.batch_tag,
                 "base_logp_chosen" : round(lp_c, 4),
                 "base_logp_rejected" : round(lp_r[j], 4),
+                "base_eos_logp_chosen" : round(end_c, 4),
+                "base_eos_logp_rejected" : round(end_r[j], 4),
             })
             gaps.append(lp_r[j] - lp_c)
+            eos_gaps.append(end_c - end_r[j])
             nm[b] += 1
             reps[w] += 1
 
@@ -292,6 +309,7 @@ def build_split(rows : Sequence[dict], pool : Pool, scorer : BaseScorer, args, s
         rep.mean_gap = sum(gaps) / len(gaps)
         rep.median_gap = s[len(s) // 2]
         rep.frac_rejected_more_likely = sum(1 for g in gaps if g > 0) / len(gaps)
+        rep.mean_eos_gap = sum(eos_gaps) / len(eos_gaps)
     rep.near_miss = dict(sorted(nm.items()))
     rep.top_replacements = reps.most_common(15)
     rep.seconds = time.perf_counter() - t0
@@ -323,9 +341,10 @@ def render(rep : BuildReport, width : int = 76) -> str:
     L = [bar, f"MINIMAL PAIRS  {rep.split}", bar,
          f"  rows in        : {rep.rows_in:,}   processed {rep.processed:,}   pool {rep.pool_words:,} end words   {rep.seconds:.1f}s",
          f"  skipped        : not two lines {rep.skipped_not_two_lines}   chosen not rhyme {rep.skipped_chosen_not_rhyme}"
-         f"   no candidates {rep.skipped_no_candidates}   gap {rep.skipped_gap}   band widened {rep.widened_band}",
+         f"   no candidates {rep.skipped_no_candidates}   eos {rep.skipped_eos}   gap {rep.skipped_gap}   band widened {rep.widened_band}",
          f"  kept chosen    : {rep.kept_chosen:,}   x {rep.negatives_per_chosen} negatives = {rep.rows_out:,} rows",
-         f"  logp gap       : mean {rep.mean_gap:+.3f}   median {rep.median_gap:+.3f} nats   rejected more likely {rep.frac_rejected_more_likely:.1%}",
+         f"  logp gap       : mean {rep.mean_gap:+.3f}   median {rep.median_gap:+.3f} nats   rejected more likely {rep.frac_rejected_more_likely:.1%}"
+         f"   eos gap mean {rep.mean_eos_gap:+.3f}",
          f"  near_miss      : {rep.near_miss}",
          "  replacements   : " + "  ".join(f"{w}:{c}" for w, c in rep.top_replacements),
          bar]
@@ -342,6 +361,8 @@ def main(argv = None) -> int:
     ap.add_argument("--band", type = float, default = 1.5, help = "frequency band in log2 count around the replaced word")
     ap.add_argument("--max-gap", dest = "max_gap", type = float, default = 3.0,
                     help = "drop the couplet when fewer than --negatives candidates sit within this many nats below the chosen")
+    ap.add_argument("--eos-gap", dest = "eos_gap", type = float, default = 1.5,
+                    help = "drop a candidate whose EOS log prob after the new word sits more than this many nats below the chosen's")
     ap.add_argument("--near-miss", dest = "near_miss", choices = ("grade", "exclude"), default = "grade",
                     help = "grade keeps eye rhymes and labels them, exclude drops words sharing 2+ final letters")
     ap.add_argument("--model", default = "gpt2", help = "base model that measures plausibility, the DPO reference")
@@ -361,6 +382,8 @@ def main(argv = None) -> int:
         raise SystemExit("--band must be > 0")
     if args.max_gap < 0.0:
         raise SystemExit("--max-gap must be >= 0")
+    if args.eos_gap < 0.0:
+        raise SystemExit("eos gap must be at least 0")
     if "{prompt}" not in args.template or "{response}" not in args.template:
         raise SystemExit("--template must contain {prompt} and {response}")
 
