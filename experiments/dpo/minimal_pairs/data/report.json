@@ -1,0 +1,198 @@
+{
+  "settings": {
+    "src": "data/preference_data/rhyme_50k",
+    "out": "experiments/dpo/minimal_pairs/data",
+    "splits": "train,val",
+    "negatives": 2,
+    "candidates": 16,
+    "band": 1.5,
+    "max_gap": 3.0,
+    "eos_gap": 1.5,
+    "near_miss": "grade",
+    "model": "gpt2",
+    "template": "{prompt}\n{response}",
+    "append_eos": true,
+    "device": "cuda",
+    "batch_size": 128,
+    "limit": 0,
+    "batch_tag": "minimal"
+  },
+  "splits": {
+    "train": {
+      "split": "train",
+      "rows_in": 31488,
+      "pool_words": 4260,
+      "processed": 31488,
+      "skipped_not_two_lines": 0,
+      "skipped_chosen_not_rhyme": 0,
+      "skipped_no_candidates": 0,
+      "skipped_gap": 3123,
+      "skipped_eos": 247,
+      "widened_band": 0,
+      "kept_chosen": 28118,
+      "rows_out": 56236,
+      "negatives_per_chosen": 2,
+      "mean_gap": 3.6120835238529376,
+      "median_gap": 3.475341796875,
+      "frac_rejected_more_likely": 0.8577601536382389,
+      "mean_eos_gap": -0.4574897012768908,
+      "near_miss": {
+        "0": 46351,
+        "1": 8461,
+        "2": 1122,
+        "3+": 302
+      },
+      "top_replacements": [
+        [
+          "love",
+          1132
+        ],
+        [
+          "light",
+          881
+        ],
+        [
+          "day",
+          772
+        ],
+        [
+          "sky",
+          692
+        ],
+        [
+          "sound",
+          687
+        ],
+        [
+          "away",
+          686
+        ],
+        [
+          "home",
+          666
+        ],
+        [
+          "inside",
+          553
+        ],
+        [
+          "place",
+          525
+        ],
+        [
+          "air",
+          522
+        ],
+        [
+          "lost",
+          521
+        ],
+        [
+          "time",
+          488
+        ],
+        [
+          "way",
+          480
+        ],
+        [
+          "space",
+          476
+        ],
+        [
+          "night",
+          472
+        ]
+      ],
+      "seconds": 429.7300915494561
+    },
+    "val": {
+      "split": "val",
+      "rows_in": 7959,
+      "pool_words": 2231,
+      "processed": 7959,
+      "skipped_not_two_lines": 0,
+      "skipped_chosen_not_rhyme": 0,
+      "skipped_no_candidates": 0,
+      "skipped_gap": 806,
+      "skipped_eos": 55,
+      "widened_band": 0,
+      "kept_chosen": 7098,
+      "rows_out": 14196,
+      "negatives_per_chosen": 2,
+      "mean_gap": 3.564848330700085,
+      "median_gap": 3.4700927734375,
+      "frac_rejected_more_likely": 0.8545364891518737,
+      "mean_eos_gap": -0.44053872829425433,
+      "near_miss": {
+        "0": 11743,
+        "1": 2095,
+        "2": 288,
+        "3+": 70
+      },
+      "top_replacements": [
+        [
+          "love",
+          327
+        ],
+        [
+          "light",
+          242
+        ],
+        [
+          "sky",
+          218
+        ],
+        [
+          "day",
+          198
+        ],
+        [
+          "away",
+          198
+        ],
+        [
+          "sound",
+          184
+        ],
+        [
+          "air",
+          176
+        ],
+        [
+          "home",
+          149
+        ],
+        [
+          "time",
+          146
+        ],
+        [
+          "world",
+          139
+        ],
+        [
+          "inside",
+          133
+        ],
+        [
+          "space",
+          113
+        ],
+        [
+          "below",
+          108
+        ],
+        [
+          "way",
+          108
+        ],
+        [
+          "night",
+          108
+        ]
+      ],
+      "seconds": 107.77633583080024
+    }
+  }
+}
