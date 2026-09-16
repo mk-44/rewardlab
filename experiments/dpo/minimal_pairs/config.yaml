@@ -1,0 +1,68 @@
+run_name: from_sft_beta_0.1
+out_dir: experiments/dpo/minimal_pairs
+
+data:
+  train_path: experiments/dpo/minimal_pairs/data/train.jsonl
+  val_path: experiments/dpo/minimal_pairs/data/val.jsonl
+  format: pairwise
+  json_key: null
+  slice_keys: [domain, len_bucket, near_miss, batch]
+  max_drop_rate: 0.05
+  prompt_field: prompt
+
+policy:
+  model_name: null
+  model_ckpt: experiments/dpo/non_sft_50k_data/sft_wt_1.0/export
+  tokenizer: ""
+  max_length: 100
+  template: "{prompt}\n{response}"
+  append_eos: true
+
+reference:
+  reference_ckpt: experiments/dpo/non_sft_50k_data/sft_wt_1.0/export
+  precomputed_logp_path: experiments/dpo/minimal_pairs/cache/ref_train.pt
+  precomputed_val_logp_path: experiments/dpo/minimal_pairs/cache/ref_val.pt
+
+loss:
+  beta: 0.1
+  length_norm: sum
+  sft_wt: 0.0
+
+train:
+  epochs: 2
+  batch_size: 16
+  accm_steps: 2
+  eval_batch_size: 64
+  lr: 0.000005
+  weight_decay: 0.0
+  sched: cosine
+  warmup_steps: 150
+  clip_norm: 1.0
+  log_every: 50
+  eval_every: 250
+  early_stop_patience: 10
+  min_delta: 0.0
+  keep_last: 2
+  disable_dropout: true
+
+inference:
+  num_samples_per_prompt: 4
+  temperature: 1.0
+  top_p: 0.95
+  max_new_tokens: 32
+  eval_prompts: 256
+
+reward:
+  reward_functions: ["experiments/dpo/non_sft_50k_data/custom_reward_functions.py:reward_model", "experiments/dpo/non_sft_50k_data/custom_reward_functions.py:rhyme_rate"]
+  reward_wts: [0.0, 1.0]
+  normalize_reward_func_wts: false
+
+execution:
+  device: cuda
+  dtype: float32
+  seed: 0
+  deterministic: false
+
+hub:
+  repo_id: null
+  private: true
