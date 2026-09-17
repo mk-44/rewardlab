@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Sequence, Literal
 from rlhf.core.config import DataConfig, ExecSection, HubSection, RewardSection, apply_overrides, from_dict, load_yaml
 from rlhf.core.contracts import ConfigError
+from rlhf.core.device import check_dtype_pair
 from rlhf.core.hub import parse_repo_id
 from rlhf.core.scoring.rewards import load_reward_functions, resolve_reward_weights
 from rlhf.core.training.config import TrainConfig
@@ -18,6 +19,7 @@ class PolicyConfig:
     max_length : int = 512
     template : str = "{prompt}\n{response}"
     append_eos : bool = True
+    gradient_checkpointing : bool = False
 
 @dataclass
 class ReferenceConfig:
@@ -68,7 +70,9 @@ class DPOConfig:
             str(self.policy.max_length),
             str(self.policy.append_eos),
             self.loss.length_norm,
-            self.reference.reference_ckpt or "<policy_clone_at_init>"
+            self.reference.reference_ckpt or "<policy_clone_at_init>",
+            self.execution.weights_dtype,
+            self.execution.compute_dtype
         ]
         return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[: 16]
 
@@ -99,8 +103,10 @@ def validate(cfg : DPOConfig) -> None:
 
     if i.num_samples_per_prompt < 1:
         raise ConfigError(f"inference.num_samples_per_prompt must be >= 1, got {i.num_samples_per_prompt}")
-    if i.temperature <= 0:
-        raise ConfigError(f"inference.temperature must be positive, got {i.temperature}")
+    if i.temperature < 0:
+        raise ConfigError(f"inference.temperature must be >= 0 with 0 meaning greedy decoding, got {i.temperature}")
+    if i.temperature == 0 and i.num_samples_per_prompt > 1:
+        raise ConfigError(f"inference.temperature=0 is greedy decoding so every sample would be the same text, set inference.num_samples_per_prompt to 1 (got {i.num_samples_per_prompt})")
     if not (0.0 < i.top_p <= 1.0):
         raise ConfigError(f"inference.top_p must be in (0, 1], got {i.top_p}")
     if i.max_new_tokens < 1:
@@ -114,6 +120,8 @@ def validate(cfg : DPOConfig) -> None:
             "log pi(y|x) is stochastic, Delta is noisy, and precomputed reference "
             "log-probs no longer match the policy forward pass"
         )
+
+    check_dtype_pair(cfg.execution.weights_dtype, cfg.execution.compute_dtype)
 
     ref = cfg.reference
     if ref.precomputed_logp_path and ref.precomputed_val_logp_path and Path(ref.precomputed_logp_path).resolve() == Path(ref.precomputed_val_logp_path).resolve():

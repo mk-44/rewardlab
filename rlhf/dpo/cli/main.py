@@ -86,7 +86,7 @@ def _load_policy(cfg : DPOConfig, plan : ExecutionPlan):
         model_name = cfg.policy.model_name or None, 
         model_ckpt = cfg.policy.model_ckpt or None,
         device = plan.device,
-        dtype = plan.dtype
+        weights_dtype = plan.weights_dtype
     )
 
 
@@ -106,10 +106,11 @@ def _references(
     collator : DPOCollator, 
     train_pairs : Sequence[PairView], 
     val_pairs : Sequence[PairView],
-    device : str
+    device : str,
+    autocast_dtype = None
 ):
     from rlhf.dpo.reference import make_reference, LiveReference
-    ref = make_reference(cfg, policy, collator, train_pairs, device, train = True)
+    ref = make_reference(cfg, policy, collator, train_pairs, device, train = True, autocast_dtype = autocast_dtype)
     if isinstance(ref, LiveReference) and not cfg.reference.precomputed_val_logp_path:
         return ref, ref
     val_ref = make_reference(
@@ -118,7 +119,8 @@ def _references(
         collator,
         pairs = val_pairs,
         device = device,
-        train = False
+        train = False,
+        autocast_dtype = autocast_dtype
     )
     return ref, val_ref
 
@@ -156,7 +158,7 @@ def cmd_build_cache(cfg : DPOConfig, args) -> int:
         raise ConfigError("reference.precomputed_logp_path and precomputed_val_logp_path are both unset, nothing to build. train would use a live reference")
     
     _require_data(cfg, *[s for s, p in (("train", ref_cfg.precomputed_logp_path), ("val", ref_cfg.precomputed_val_logp_path)) if p])
-    plan = resolve(cfg.execution.device, cfg.execution.dtype, cfg.execution.seed, cfg.execution.deterministic)
+    plan = resolve(cfg.execution.device, cfg.execution.compute_dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic, weights_dtype = cfg.execution.weights_dtype)
     policy, _ = _load_policy(cfg, plan)
     collator = _collator(cfg)
 
@@ -176,7 +178,7 @@ def cmd_build_cache(cfg : DPOConfig, args) -> int:
         existed = Path(path).exists()
         pairs = _load_pairs(cfg, data_path, split)
 
-        ref = make_reference(cfg, policy, collator, pairs, plan.device, train = train)
+        ref = make_reference(cfg, policy, collator, pairs, plan.device, train = train, autocast_dtype = plan.torch_autocast_dtype())
         print(f"{split}: {'loaded and verified' if existed else 'built'} {path}   ({ref.report.n_cached:,} pairs)")
         print(render_reference(ref.report))
     
@@ -192,7 +194,7 @@ def cmd_train(cfg : DPOConfig, args) -> int:
 
     _require_data(cfg, "train", "val")
     fns = load_reward_functions(cfg.reward.reward_functions)
-    plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic)
+    plan = resolve(cfg.execution.device, cfg.execution.compute_dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic, weights_dtype = cfg.execution.weights_dtype)
     train_pairs = _load_pairs(cfg, cfg.data.train_path, "train")
     val_pairs = _load_pairs(cfg, cfg.data.val_path, "val")
     _hub_preflight(cfg)
@@ -204,7 +206,7 @@ def cmd_train(cfg : DPOConfig, args) -> int:
     policy, policy_rep = _load_policy(cfg, plan)
     collator = _collator(cfg)
 
-    ref, val_ref = _references(cfg, policy, collator, train_pairs, val_pairs, plan.device)
+    ref, val_ref = _references(cfg, policy, collator, train_pairs, val_pairs, plan.device, plan.torch_autocast_dtype())
     prompts = _gen_prompts(val_pairs, cfg.inference.eval_prompts)
 
     trainer = DPOTrainer(
@@ -239,12 +241,12 @@ def cmd_eval(cfg : DPOConfig, args) -> int:
     from rlhf.dpo.reference import make_reference
 
     _require_data(cfg, "val")
-    plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic)
+    plan = resolve(cfg.execution.device, cfg.execution.compute_dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic, weights_dtype = cfg.execution.weights_dtype)
     policy, _ = _load_policy(cfg, plan)
     collator = _collator(cfg)
     val_pairs = _load_pairs(cfg, cfg.data.val_path, "val")
 
-    val_ref = make_reference(cfg, policy, collator, val_pairs, plan.device, train = False)
+    val_ref = make_reference(cfg, policy, collator, val_pairs, plan.device, train = False, autocast_dtype = plan.torch_autocast_dtype())
     src = Path(args.ckpt) if args.ckpt else _run_dir(cfg) / "checkpoints"
     state = load_checkpoint(src, which = args.which)
 
@@ -265,6 +267,7 @@ def cmd_eval(cfg : DPOConfig, args) -> int:
         device = plan.device,
         with_slices = True,
         seed = plan.seed,
+        autocast_dtype = plan.torch_autocast_dtype(),
     )
     payload = {"checkpoint" : str(src), "which" : args.which, "checkpoint_step" : state["step"], **rep.to_dict()}
     _write(_run_dir(cfg), "eval_report.json", payload)

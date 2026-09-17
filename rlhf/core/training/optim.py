@@ -75,6 +75,19 @@ def build_optimizer(
     return opt, report
 
 
+def bf16_update_report(model : nn.Module, lr : float) -> Tuple[float, int]:
+    if not (isinstance(lr, float) and math.isfinite(lr) and lr > 0):
+        raise ConfigError(f"lr must be a positive finite float, got {lr!r}")
+    total = stuck = 0
+    with torch.no_grad():
+        for p in model.parameters():
+            if not p.requires_grad:
+                continue
+            total += p.numel()
+            stuck += int((p.abs() > 512.0 * lr).sum().item())
+    return (stuck / total if total else 0.0), total
+
+
 def schedule_factor(
     step : int,
     kind : Literal["constant", "linear", "cosine"],

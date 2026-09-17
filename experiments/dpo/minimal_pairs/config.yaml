@@ -17,6 +17,7 @@ policy:
   max_length: 100
   template: "{prompt}\n{response}"
   append_eos: true
+  gradient_checkpointing: false
 
 reference:
   reference_ckpt: experiments/dpo/non_sft_50k_data/sft_wt_1.0/export
@@ -44,6 +45,7 @@ train:
   min_delta: 0.0
   keep_last: 2
   disable_dropout: true
+  resume_state: latest
 
 inference:
   num_samples_per_prompt: 4
@@ -59,7 +61,8 @@ reward:
 
 execution:
   device: cuda
-  dtype: float32
+  weights_dtype: float32
+  compute_dtype: float32
   seed: 0
   deterministic: false
 

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import random
+from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -15,6 +16,8 @@ _DTYPES = {
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
+
+_WEIGHTS_DTYPES = ("float32", "bfloat16")
 
 
 def resolve_device(name: str) -> torch.device:
@@ -65,14 +68,18 @@ def probe_grad_scaler(device_type: str) -> bool:
         return False
 
 
-def resolve_dtype(name: str, device: torch.device) -> torch.dtype:
+def dtype_from_name(name: str, label: str = "dtype") -> torch.dtype:
     if name not in _DTYPES:
-        raise ConfigError(f"dtype must be one of {sorted(_DTYPES)}, got {name!r}")
-    dtype = _DTYPES[name]
+        raise ConfigError(f"{label} must be one of {sorted(_DTYPES)}, got {name!r}")
+    return _DTYPES[name]
+
+
+def resolve_dtype(name: str, device: torch.device, label: str = "dtype") -> torch.dtype:
+    dtype = dtype_from_name(name, label)
     ok, why = probe_dtype(device, dtype)
     if not ok:
         raise ConfigError(
-            f"dtype={name!r} declared but {device.type} failed the probe: {why}. "
+            f"{label}={name!r} declared but {device.type} failed the probe: {why}. "
             f"Fix the config or the machine. No silent fallback."
         )
     return dtype
@@ -93,6 +100,27 @@ def amp_policy(dtype_name: str) -> AmpPolicy:
     if dtype_name == "float16":
         return AmpPolicy(autocast=True, autocast_dtype="float16", grad_scaler=True)
     raise ConfigError(f"no amp policy for dtype {dtype_name!r}")
+
+
+def check_dtype_pair(weights_dtype: str, compute_dtype: str) -> None:
+    if weights_dtype not in _WEIGHTS_DTYPES:
+        raise ConfigError(
+            f"execution.weights_dtype must be float32 or bfloat16, got {weights_dtype!r}. "
+            f"float16 weights overflow and underflow under AdamW. For mixed precision keep "
+            f"weights_dtype float32 and set compute_dtype."
+        )
+    dtype_from_name(compute_dtype, "execution.compute_dtype")
+    if weights_dtype == "bfloat16" and compute_dtype != "bfloat16":
+        raise ConfigError(
+            f"execution.compute_dtype={compute_dtype!r} cannot differ from execution.weights_dtype='bfloat16'. "
+            f"Autocast never widens bfloat16 weights, so bfloat16 weights need compute_dtype bfloat16."
+        )
+
+
+def amp_context(device: Union[str, torch.device], autocast_dtype: Optional[torch.dtype]):
+    if autocast_dtype is None:
+        return nullcontext()
+    return torch.autocast(device_type=torch.device(device).type, dtype=autocast_dtype)
 
 
 @dataclass
@@ -145,9 +173,9 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
 @dataclass
 class ExecutionPlan:
     requested_device: str = "cpu"
-    requested_dtype: str = "float32"
     device: str = "cpu"
-    dtype: str = "float32"
+    weights_dtype: str = "float32"
+    compute_dtype: str = "float32"
     amp: AmpPolicy = field(default_factory=lambda: amp_policy("float32"))
     grad_scaler_available: bool = True
     dist: DistInfo = field(default_factory=DistInfo)
@@ -157,8 +185,14 @@ class ExecutionPlan:
     def torch_device(self) -> torch.device:
         return torch.device(self.device)
 
-    def torch_dtype(self) -> torch.dtype:
-        return _DTYPES[self.dtype]
+    def torch_weights_dtype(self) -> torch.dtype:
+        return _DTYPES[self.weights_dtype]
+
+    def torch_compute_dtype(self) -> torch.dtype:
+        return _DTYPES[self.compute_dtype]
+
+    def torch_autocast_dtype(self) -> Optional[torch.dtype]:
+        return _DTYPES[self.compute_dtype] if self.amp.autocast else None
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
@@ -168,26 +202,29 @@ class ExecutionPlan:
         return d
 
 
-def resolve(device: str = "cpu", dtype: str = "float32", seed: int = 0,
-            deterministic: bool = False, env: Optional[dict] = None) -> ExecutionPlan:
+def resolve(device: str = "cpu", compute_dtype: str = "float32", seed: int = 0,
+            deterministic: bool = False, env: Optional[dict] = None,
+            weights_dtype: str = "float32") -> ExecutionPlan:
     info = dist_info(env)
     mapped = device_for_rank(device, info)
     dev = resolve_device(mapped)
-    resolve_dtype(dtype, dev)
-    amp = amp_policy(dtype)
+    check_dtype_pair(weights_dtype, compute_dtype)
+    resolve_dtype(weights_dtype, dev, "weights_dtype")
+    resolve_dtype(compute_dtype, dev, "compute_dtype")
+    amp = amp_policy(compute_dtype)
 
     scaler_ok = probe_grad_scaler(dev.type)
     if amp.grad_scaler and not scaler_ok:
         raise ConfigError(
-            f"dtype={dtype!r} needs a grad scaler but torch.amp.GradScaler "
+            f"compute_dtype={compute_dtype!r} needs a grad scaler but torch.amp.GradScaler "
             f"does not support device type {dev.type!r}. Use bfloat16 or "
             f"float32 on this device."
         )
 
     seed_everything(seed, deterministic)
     return ExecutionPlan(
-        requested_device=device, requested_dtype=dtype,
-        device=str(dev), dtype=dtype, amp=amp,
+        requested_device=device, device=str(dev),
+        weights_dtype=weights_dtype, compute_dtype=compute_dtype, amp=amp,
         grad_scaler_available=scaler_ok, dist=info,
         seed=seed, deterministic=deterministic,
     )
@@ -199,7 +236,8 @@ def render(plan: ExecutionPlan, width: int = 76) -> str:
     L = [bar, "EXECUTION PLAN", bar,
          f"  device        : {plan.device}"
          + (f"   (requested {plan.requested_device})" if plan.device != plan.requested_device else ""),
-         f"  dtype         : {plan.dtype}   probe passed",
+         f"  weights_dtype : {plan.weights_dtype}   probe passed",
+         f"  compute_dtype : {plan.compute_dtype}   probe passed",
          f"  amp           : autocast={'on ' + str(a.autocast_dtype) if a.autocast else 'off'}"
          f"   grad_scaler={'yes' if a.grad_scaler else 'no'}",
          f"  dist          : {'rank ' + str(d.rank) + '/' + str(d.world_size) + ' local ' + str(d.local_rank) if d.is_dist else 'single process'}"

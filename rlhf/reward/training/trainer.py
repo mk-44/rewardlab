@@ -1,7 +1,6 @@
 from __future__ import annotations
 import math
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union, TYPE_CHECKING
@@ -9,12 +8,12 @@ import torch
 from torch import nn
 
 from rlhf.core.contracts import ConfigError
-from rlhf.core.device import ExecutionPlan, seed_everything
+from rlhf.core.device import ExecutionPlan, amp_context, seed_everything
 from rlhf.core.logging import RunLogger
 from rlhf.core.losses import bt_loss
-from rlhf.core.training.checkpoint import load_checkpoint, restore, save_checkpoint
+from rlhf.core.training.checkpoint import check_resume_state, load_checkpoint, restore, resume_source, save_checkpoint
 from rlhf.reward.training.evaluate import evaluate
-from rlhf.core.training.optim import build_optimizer, build_scheduler
+from rlhf.core.training.optim import bf16_update_report, build_optimizer, build_scheduler
 from rlhf.core.training.config import TrainConfig, _check_range
 
 if TYPE_CHECKING:
@@ -70,7 +69,9 @@ class Trainer:
         _check_range("early_stop_patience", cfg.early_stop_patience, int, min_val = 0)
         if cfg.keep_last is not None:
            _check_range("keep_last", cfg.keep_last, int, 1)
-        
+
+        check_resume_state(cfg.resume_state)
+
         if not (isinstance(cfg.min_delta, (int, float)) and cfg.min_delta >= 0):
             raise ConfigError(f"min_delta must be >= 0, got {cfg.min_delta!r}")
 
@@ -100,8 +101,11 @@ class Trainer:
         self.optimizer, self.optim_report = build_optimizer(self.model, lr = cfg.lr, weight_decay = cfg.weight_decay)
         total_steps = self.total_steps if cfg.sched in ("cosine", "linear") else None
         self.sched, self.sched_report = build_scheduler(self.optimizer, cfg.sched, cfg.warmup_steps, total_steps)
+        if plan.weights_dtype == "bfloat16":
+            stuck, n_trainable = bf16_update_report(self.model, cfg.lr)
+            self.logger.say(f"bf16 weights: {stuck:.1%} of {n_trainable} trainable parameters sit above 512 x lr so a step of lr is under half a bf16 ulp and rounds to nothing")
         self.scaler = torch.amp.grad_scaler.GradScaler(device = plan.torch_device().type) if plan.amp.grad_scaler else None
-        self._amp = lambda : (torch.autocast(device_type = plan.torch_device().type, dtype = plan.torch_dtype())) if plan.amp.autocast else nullcontext()
+        self._amp = lambda : amp_context(plan.torch_device(), plan.torch_autocast_dtype())
     
 
     def _train_groups(self, epochs : int, start_idx : int = 0):
@@ -122,7 +126,7 @@ class Trainer:
             self.model, 
             self._val_batches(), 
             device = self.plan.device, 
-            autocast_dtype = self.plan.torch_dtype() if self.plan.amp.autocast else None
+            autocast_dtype = self.plan.torch_autocast_dtype()
         )
 
         self.logger.log(step, **res.flat("eval"))
@@ -145,7 +149,8 @@ class Trainer:
             best_metric = self._best, 
             is_best = improved,
             keep_last = self.cfg.keep_last,
-            extra = {"epoch": epoch, "train_start_idx": train_start_idx}
+            extra = {"epoch": epoch, "train_start_idx": train_start_idx},
+            resume_state = self.cfg.resume_state
         )
         return res, improved
     
@@ -155,7 +160,7 @@ class Trainer:
         step, start_epoch, start_idx = 0, 0, 0
 
         if resume:
-            state = load_checkpoint(self.ckpt_dir, which = "latest")
+            state = load_checkpoint(self.ckpt_dir, which = resume_source(self.cfg.resume_state))
             step, _, self._best, extra = restore(state, self.model, self.optimizer, self.sched, self.scaler)
 
             for pstate in self.optimizer.state.values():

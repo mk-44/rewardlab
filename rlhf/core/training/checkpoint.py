@@ -10,6 +10,8 @@ import torch
 from rlhf.core.contracts import ConfigError
 
 _FILE_FMT = "step_{step:08d}.pt"
+_BEST_FILE = "best.pt"
+RESUME_STATES = ("latest", "best", "all", "none")
 
 
 def rng_state() -> dict:
@@ -58,6 +60,19 @@ def _atomic_json(obj : dict, path : Path) -> None:
     os.replace(tmp, path)
 
 
+def check_resume_state(resume_state : str) -> str:
+    if resume_state not in RESUME_STATES:
+        raise ConfigError(f"train.resume_state must be one of {list(RESUME_STATES)}, got {resume_state!r}")
+    return resume_state
+
+
+def resume_source(resume_state : str) -> str:
+    check_resume_state(resume_state)
+    if resume_state == "none":
+        raise ConfigError("train.resume_state=none saves weights only so this run cannot be resumed. set it to latest or best or all before training if resume matters")
+    return "best" if resume_state == "best" else "latest"
+
+
 @dataclass
 class CheckpointReport:
     path : str = ""
@@ -69,50 +84,61 @@ class CheckpointReport:
         return dict(self.__dict__)
 
 
+def _payload(model, optimizer, scheduler, scaler, with_state : bool, common : dict) -> dict:
+    return {
+        "model" : model.state_dict(),
+        "optimizer" : optimizer.state_dict() if with_state else None,
+        "scheduler" : scheduler.state_dict() if with_state and scheduler is not None else None,
+        "scaler" : scaler.state_dict() if with_state and scaler is not None else None,
+        **common
+    }
+
+
 def save_checkpoint(
-    ckpt_dir : Path, 
-    model, 
-    optimizer : torch.optim.Optimizer, 
-    scheduler : Optional[torch.optim.lr_scheduler.LambdaLR] = None, 
+    ckpt_dir : Path,
+    model,
+    optimizer : torch.optim.Optimizer,
+    scheduler : Optional[torch.optim.lr_scheduler.LambdaLR] = None,
     scaler : Optional[torch.amp.GradScaler] = None,
-    *, 
-    step : int, 
+    *,
+    step : int,
     epoch : int = 0,
-    best_metric : Optional[float] = None, 
+    best_metric : Optional[float] = None,
     is_best : bool = False,
-    keep_last : Optional[int] = 2, 
-    extra : Optional[dict] = None
+    keep_last : Optional[int] = 2,
+    extra : Optional[dict] = None,
+    resume_state : str = "latest"
 ) -> CheckpointReport:
-    
+
     if not (isinstance(step, int) and not isinstance(step, bool) and step >= 0):
         raise ConfigError(f"step must be an int >= 0, got {step!r}")
-    
+
     if keep_last is not None and not (isinstance(keep_last, int) and not isinstance(keep_last, bool) and keep_last >= 1):
         raise ConfigError(f"keep_last must be an int >= 1, got {keep_last!r}")
-    
+
+    check_resume_state(resume_state)
+
     ckpt_dir = Path(ckpt_dir)
     ckpt_dir.mkdir(parents = True, exist_ok = True)
 
-    payload = {
-        "model" : model.state_dict(),
-        "optimizer" : optimizer.state_dict(),
-        "scheduler" : scheduler.state_dict() if scheduler is not None else None,
-        "scaler" : scaler.state_dict() if scaler is not None else None,
+    common = {
         "rng" : rng_state(),
         "step" : step,
         "epoch" : int(epoch),
         "best_metric" : None if best_metric is None else float(best_metric),
-        "extra" : dict(extra) if extra else {}
+        "extra" : dict(extra) if extra else {},
+        "resume_state" : resume_state
     }
 
     path = ckpt_dir / _FILE_FMT.format(step=step)
-    
-    _atomic_torch_save(payload, path)
+
+    _atomic_torch_save(_payload(model, optimizer, scheduler, scaler, resume_state in ("latest", "all"), common), path)
     _atomic_json({"file" : path.name, "step" : step}, ckpt_dir / "latest.json")
-    
+
     if is_best:
-        _atomic_json({"file" : path.name, "step" : step}, ckpt_dir / "best.json")
-    
+        _atomic_torch_save(_payload(model, optimizer, scheduler, scaler, resume_state in ("best", "all"), common), ckpt_dir / _BEST_FILE)
+        _atomic_json({"file" : _BEST_FILE, "step" : step}, ckpt_dir / "best.json")
+
     pruned = []
 
     if keep_last is not None:
@@ -157,8 +183,10 @@ def restore(
     with_rng : bool = True
 ):
     model.load_state_dict(state["model"])
-    
+
     if optimizer is not None:
+        if state["optimizer"] is None:
+            raise ConfigError(f"checkpoint at step {state['step']} holds weights only because it was saved under train.resume_state={state.get('resume_state', 'all')!r} so it cannot resume training")
         optimizer.load_state_dict(state["optimizer"])
     
     if scheduler is not None:

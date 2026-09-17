@@ -4,6 +4,7 @@ from typing import Optional, Literal, get_args
 import torch
 from torch import nn
 from rlhf.core.contracts import ConfigError
+from rlhf.core.device import dtype_from_name
 
 Pooling = Literal["last", "mean", "cls"]
 
@@ -34,6 +35,7 @@ class BackboneReport:
     n_trainable : int = 0
     frozen : bool = False
     gradient_checkpointing : bool = False
+    weights_dtype : str = "float32"
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -48,7 +50,8 @@ class Backbone(nn.Module):
         custom_hidden_size : Optional[int] = None,
         gradient_checkpointing : bool = False,
         freeze : bool = False,
-        last_hidden_state_key : Optional[str] = "last_hidden_state"
+        last_hidden_state_key : Optional[str] = "last_hidden_state",
+        weights_dtype : str = "float32"
     ):
         super().__init__()
         if pooling not in get_args(Pooling):
@@ -63,8 +66,8 @@ class Backbone(nn.Module):
             custom = True
         else:
             from transformers import AutoModel
-            
-            self.model = AutoModel.from_pretrained(model_name)
+
+            self.model = AutoModel.from_pretrained(model_name, dtype = dtype_from_name(weights_dtype, "weights_dtype"))
             model_config = self.model.config
             hidden_size = getattr(model_config, "hidden_size", None) or getattr(model_config, "n_embd", None)
             if hidden_size is None:
@@ -99,8 +102,9 @@ class Backbone(nn.Module):
             hidden_size = self.hidden_size, 
             n_params = n_params, 
             n_trainable = n_trainable,
-            frozen = freeze, 
-            gradient_checkpointing = gradient_checkpointing
+            frozen = freeze,
+            gradient_checkpointing = gradient_checkpointing,
+            weights_dtype = weights_dtype
         )
             
 

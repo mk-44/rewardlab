@@ -28,8 +28,10 @@ train:
   eval_every: 500
   early_stop_patience: 4
   keep_last: 2
+  resume_state: latest
 
 execution:
   device: mps
-  dtype: float32
+  weights_dtype: float32
+  compute_dtype: float32
   seed: 0

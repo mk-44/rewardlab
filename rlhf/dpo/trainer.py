@@ -1,5 +1,4 @@
 from __future__ import annotations
-from contextlib import nullcontext
 import math
 import time
 from dataclasses import dataclass
@@ -8,14 +7,14 @@ from typing import Union, Sequence, Optional, TYPE_CHECKING
 import torch
 
 from rlhf.core.contracts import ConfigError
-from rlhf.core.device import ExecutionPlan, seed_everything
+from rlhf.core.device import ExecutionPlan, amp_context, seed_everything
 from rlhf.core.logging import RunLogger
-from rlhf.core.policy.lm import disable_dropout, sequence_logprobs
+from rlhf.core.policy.lm import disable_dropout, enable_gradient_checkpointing, sequence_logprobs
 from rlhf.core.preference.collate import dataset_digest
 from rlhf.core.scoring.rewards import combine_rewards, resolve_reward_weights
-from rlhf.core.training.checkpoint import load_checkpoint, restore, save_checkpoint
+from rlhf.core.training.checkpoint import check_resume_state, load_checkpoint, restore, resume_source, save_checkpoint
 from rlhf.core.training.config import _check_range
-from rlhf.core.training.optim import build_optimizer, build_scheduler
+from rlhf.core.training.optim import bf16_update_report, build_optimizer, build_scheduler
 from rlhf.dpo.evaluate import EvalReport, evaluate
 from rlhf.dpo.losses import dpo_loss
 from rlhf.dpo.reference import CachedReference, assert_step_zero
@@ -121,6 +120,8 @@ class DPOTrainer:
         if train_cfg.keep_last is not None:
             _check_range("keep_last", train_cfg.keep_last, int, min_val = 1)
 
+        check_resume_state(train_cfg.resume_state)
+
         if not (isinstance(train_cfg.min_delta, (int, float)) and train_cfg.min_delta >= 0):
             raise ConfigError(f"min_delta must be >= 0, got {train_cfg.min_delta!r}")
 
@@ -182,6 +183,9 @@ class DPOTrainer:
                 live_model.to(plan.device)
         
         self.dropout_zero = disable_dropout(self.model) if train_cfg.disable_dropout else 0
+        self.gradient_checkpointing = enable_gradient_checkpointing(self.model) if self.cfg.policy.gradient_checkpointing else False
+        if self.gradient_checkpointing:
+            self.logger.say("gradient checkpointing on: activations are dropped in the forward and recomputed in the backward so each step pays one extra forward for a smaller peak memory")
         self.batches_per_epoch = math.ceil(len(train_pairs) / self.cfg.train.batch_size)
         self.steps_per_epoch = math.ceil(self.batches_per_epoch / self.cfg.train.accm_steps)
         self.total_steps = self.steps_per_epoch * self.cfg.train.epochs
@@ -189,8 +193,12 @@ class DPOTrainer:
         self.optimizer, self.optimizer_report = build_optimizer(self.model, self.cfg.train.lr, self.cfg.train.weight_decay)
         self.sched, self.sched_report = build_scheduler(self.optimizer, self.cfg.train.sched, self.cfg.train.warmup_steps, self.total_steps)
 
+        if plan.weights_dtype == "bfloat16":
+            stuck, n_trainable = bf16_update_report(self.model, self.cfg.train.lr)
+            self.logger.say(f"bf16 weights: {stuck:.1%} of {n_trainable} trainable parameters sit above 512 x lr so a step of lr is under half a bf16 ulp and rounds to nothing")
+
         self.scaler = torch.amp.grad_scaler.GradScaler(device = plan.torch_device().type) if plan.amp.grad_scaler else None
-        self._amp = lambda : (torch.autocast(device_type = plan.torch_device().type, dtype = plan.torch_dtype())) if plan.amp.autocast else nullcontext()
+        self._amp = lambda : amp_context(plan.torch_device(), plan.torch_autocast_dtype())
 
         eval_batch_size = self.cfg.train.eval_batch_size
         self.val_batches = [collator(self.val_pairs[i : i + eval_batch_size]) for i in range(0, len(self.val_pairs), eval_batch_size)]
@@ -214,7 +222,7 @@ class DPOTrainer:
             return None
         
         batch = self._collate(torch.arange(min(self.cfg.train.batch_size, len(self.train_pairs))))
-        worst_chosen, worst_rejected = assert_step_zero(self.train_reference, self.model, batch, self.cfg.loss.length_norm, self.step_zero_tol)
+        worst_chosen, worst_rejected = assert_step_zero(self.train_reference, self.model, batch, self.cfg.loss.length_norm, self.step_zero_tol, autocast_dtype = self.plan.torch_autocast_dtype())
         dev = float(max(float(worst_chosen), float(worst_rejected)))
         self.logger.say(f"step-0 identity holds: max |log pi - log pi_ref| = {dev:.3e}   (tol {self.step_zero_tol:g}, {self.train_reference.report.backend} reference)")
         return dev
@@ -240,7 +248,8 @@ class DPOTrainer:
             self.reward_functions or None,
             self.plan.device,
             with_slices = True,
-            seed = self.plan.seed
+            seed = self.plan.seed,
+            autocast_dtype = self.plan.torch_autocast_dtype()
         )
 
         self.logger.log(step, **flatten_eval(eval_rep))
@@ -268,7 +277,8 @@ class DPOTrainer:
             best_metric = self._best,
             is_best = improved,
             keep_last = self.cfg.train.keep_last,
-            extra = {"epoch" : epoch, "train_start_idx" : train_start_idx, "best_step" : self._best_step, "stale" : self._stale}
+            extra = {"epoch" : epoch, "train_start_idx" : train_start_idx, "best_step" : self._best_step, "stale" : self._stale},
+            resume_state = self.cfg.train.resume_state
         )
         return eval_rep, improved
     
@@ -279,7 +289,7 @@ class DPOTrainer:
         train_cfg = self.cfg.train
 
         if resume:
-            state = load_checkpoint(self.ckpt_dir, which = "latest")
+            state = load_checkpoint(self.ckpt_dir, which = resume_source(train_cfg.resume_state))
             step, _, best_metrics, extra = restore(state, self.model, self.optimizer, self.sched, self.scaler)
             self._best = best_metrics
             self._best_step = extra.get("best_step", None)
@@ -309,6 +319,7 @@ class DPOTrainer:
             "steps_per_epoch" : self.steps_per_epoch,
             "total_steps" : self.total_steps,
             "dropout_zeroed" : self.dropout_zero,
+            "gradient_checkpointing" : self.gradient_checkpointing,
             "n_train_pairs" : len(self.train_pairs),
             "n_val_pairs" : len(self.val_pairs),
             "n_gen_prompts" : len(self.gen_prompts),

@@ -22,6 +22,7 @@ class TrainConfig:
     min_delta : float = 0.0
     keep_last : Optional[int] = None
     disable_dropout : bool = True
+    resume_state : Literal["latest", "best", "all", "none"] = "latest"
 
     def to_dict(self):
         return dict(self.__dict__)

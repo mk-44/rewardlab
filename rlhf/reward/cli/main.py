@@ -11,6 +11,7 @@ from rlhf.reward.config import AuditConfig, ProfileConfig, SplitConfig
 
 from rlhf.core.contracts import ConfigError
 from rlhf.core.config import DataConfig, ExecSection, HubSection, apply_overrides, from_dict, load_yaml
+from rlhf.core.device import check_dtype_pair
 from rlhf.core.hub import hub_path_for, parse_repo_id, preflight, pull_run, push_run, render as render_hub, render_preflight
 from rlhf.reward.training.trainer import TrainConfig
 
@@ -57,6 +58,7 @@ def load_app(path : Optional[str] = None, overrides : Sequence[str] = ()) -> App
     apply_overrides(cfg, overrides)
     if cfg.model.pooling not in Pooling_choices:
         raise ConfigError(f"model.pooling must be one of {Pooling_choices}, got {cfg.model.pooling!r}")
+    check_dtype_pair(cfg.execution.weights_dtype, cfg.execution.compute_dtype)
     if cfg.hub.repo_id:
         parse_repo_id(cfg.hub.repo_id)
     return cfg
@@ -94,7 +96,7 @@ def _build_store(cfg: AppConfig, path: str, collator):
 def _build_model(cfg : AppConfig):
     from rlhf.reward.model.backbone import Backbone
     from rlhf.reward.model.model import RewardModel
-    bb = Backbone(cfg.model.backbone, pooling = cfg.model.pooling, freeze = cfg.model.freeze)
+    bb = Backbone(cfg.model.backbone, pooling = cfg.model.pooling, freeze = cfg.model.freeze, weights_dtype = cfg.execution.weights_dtype)
     return RewardModel(bb, bias = cfg.model.bias)
 
 def _write(out_dir : Path, name : str, payload : dict) -> None:
@@ -225,7 +227,7 @@ def cmd_train(cfg: AppConfig, args) -> int:
     train_store = _build_store(cfg, cfg.data.train_path, collator)
     val_store = _build_store(cfg, cfg.data.val_path, collator)
     model = _build_model(cfg)
-    plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic)
+    plan = resolve(cfg.execution.device, cfg.execution.compute_dtype, seed = cfg.execution.seed, deterministic = cfg.execution.deterministic, weights_dtype = cfg.execution.weights_dtype)
     _hub_preflight(cfg)
     logger = RunLogger(cfg.out_dir, cfg.run_name, is_main = plan.dist.is_main, mode = "resume" if args.resume else "new")
     logger.stamp("collate", collator.report.to_dict())
@@ -255,7 +257,7 @@ def cmd_eval(cfg : AppConfig, args) -> int:
     src = args.ckpt if args.ckpt else Path(cfg.out_dir) / cfg.run_name / "checkpoints"
     state = load_checkpoint(src, which = args.which)
     restore(state, model)
-    plan = resolve(cfg.execution.device, cfg.execution.dtype, seed = cfg.execution.seed)
+    plan = resolve(cfg.execution.device, cfg.execution.compute_dtype, seed = cfg.execution.seed, weights_dtype = cfg.execution.weights_dtype)
     model = model.to(plan.device)
 
     def batches():
@@ -263,7 +265,7 @@ def cmd_eval(cfg : AppConfig, args) -> int:
         for i in range(0, len(val_store), bs):
             yield val_store.batch(list(range(i, min(i + bs, len(val_store)))))
 
-    result = evaluate(model, batches(), device = plan.device, autocast_dtype = plan.torch_dtype() if plan.amp.autocast else None)
+    result = evaluate(model, batches(), device = plan.device, autocast_dtype = plan.torch_autocast_dtype())
     payload = {"checkpoint_step": state["step"], **result.to_dict()}
     _write(Path(cfg.out_dir) / cfg.run_name, "eval_report.json", payload)
     o = result.overall

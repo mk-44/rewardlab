@@ -4,6 +4,7 @@ from typing import List, Literal, Optional, Iterable, Union, Tuple, Sequence, TY
 import torch
 import time
 from rlhf.core.config import ConfigError
+from rlhf.core.device import amp_context
 from rlhf.core.losses import bt_loss
 from rlhf.core.policy.lm import generate, sequence_logprobs
 from rlhf.core.scoring.rewards import CustomRewardFunction, RewardReport, combine_rewards
@@ -175,6 +176,7 @@ def evaluate_preferences(
     length_norm : LengthNorm = "sum",
     device : Device = "cpu",
     with_slices : bool = True,
+    autocast_dtype : Optional[torch.dtype] = None,
 ) -> EvalReport:
     t_start = time.perf_counter()
     was_train = policy_model.training
@@ -186,7 +188,7 @@ def evaluate_preferences(
         with torch.no_grad():
             for batch in batches:
                 b = batch.to(device)
-                logps = sequence_logprobs(policy_model, b.input_ids, b.attention_mask, b.completion_mask, length_norm)
+                logps = sequence_logprobs(policy_model, b.input_ids, b.attention_mask, b.completion_mask, length_norm, autocast_dtype = autocast_dtype)
                 pcs.append(logps[: b.B].float().detach().cpu())
                 prs.append(logps[b.B :].float().detach().cpu())
 
@@ -230,6 +232,8 @@ def evaluate_generations(
     seed : Optional[int] = None,
     n_examples : int = 4,
     head_tpl : str = "{prompt}",
+    device : Device = "cpu",
+    autocast_dtype : Optional[torch.dtype] = None,
 ) -> GenerationMetrics:
     if len(prompts) < 1:
         raise ConfigError(f"Pass atleats 1 prompt, currently {len(prompts)} prompts passed")
@@ -253,7 +257,8 @@ def evaluate_generations(
         for i in range(0, len(prompts), batch_size):
             batch = list(prompts[i : i + batch_size])
             heads = [head_tpl.format(prompt = p) for p in batch]
-            out = generate(policy_model, tokenizer, heads, num_samples_per_prompt, temperature, top_p, max_new_tokens, seed)
+            with amp_context(device, autocast_dtype):
+                out = generate(policy_model, tokenizer, heads, num_samples_per_prompt, temperature, top_p, max_new_tokens, seed)
             for pr, res_list in zip(batch, out):
                 for res in res_list:
                     prompts_flat.append(pr)
@@ -293,15 +298,17 @@ def evaluate(
     device : Device = "cpu",
     with_slices : bool = True,
     seed : Optional[int] = None,
+    autocast_dtype : Optional[torch.dtype] = None,
 ) -> EvalReport:
     report = evaluate_preferences(
-        policy_model, 
-        reference, 
+        policy_model,
+        reference,
         batches,
         beta = cfg.loss.beta,
         length_norm = cfg.loss.length_norm,
         device = device,
-        with_slices = with_slices
+        with_slices = with_slices,
+        autocast_dtype = autocast_dtype
     )
 
     if tokenizer is not None and prompts:
@@ -318,7 +325,9 @@ def evaluate(
             top_p = inf_config.top_p,
             max_new_tokens = inf_config.max_new_tokens,
             seed = seed,
-            head_tpl = cfg.policy.template.split("{response}")[0]
+            head_tpl = cfg.policy.template.split("{response}")[0],
+            device = device,
+            autocast_dtype = autocast_dtype
         )
     return report
 

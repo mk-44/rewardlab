@@ -42,18 +42,20 @@ class LiveReference:
         self,
         model : PreTrainedModel,
         length_norm : LengthNorm = "sum",
-        source : str = ""
+        source : str = "",
+        autocast_dtype : Optional[torch.dtype] = None
     ):
         self.model = freeze(model)
         self.length_norm = length_norm
+        self.autocast_dtype = autocast_dtype
         self.report = ReferenceReport(
             backend = "live",
             source = source or "<clone of policy at init>",
             length_norm = self.length_norm,
         )
-    
+
     def __call__(self, batch : DPOBatch) -> tuple[torch.Tensor, torch.Tensor]:
-        log_probs = sequence_logprobs(self.model, batch.input_ids, batch.attention_mask, batch.completion_mask, self.length_norm)
+        log_probs = sequence_logprobs(self.model, batch.input_ids, batch.attention_mask, batch.completion_mask, self.length_norm, autocast_dtype = self.autocast_dtype)
         self.report.n_forward_passes += 1
         self.report.n_lookups += batch.B
         return log_probs[: batch.B], log_probs[batch.B :]
@@ -78,7 +80,7 @@ class CachedReference:
                 f"reference cache fingerprint mismatch.\n"
                 f"    cache : {blob_fingerprint}\n"
                 f"    config: {fingerprint}\n"
-                f"the cache was built under a different tokenizer, template, max_length, append_eos, length_norm or reference checkpoint. "
+                f"the cache was built under a different tokenizer, template, max_length, append_eos, length_norm, weights_dtype, compute_dtype or reference checkpoint. "
                 f"rebuild it. do not train on it.")
         
         
@@ -91,7 +93,7 @@ class CachedReference:
             f"    cache : {blob_digest}\n"
             f"    data  : {data_digest}\n"
             f"  the config fingerprint matches ({fingerprint}), so tokenizer, template, "
-            f"max_length, append_eos and length_norm are all unchanged. the pairs are "
+            f"max_length, append_eos, length_norm, weights_dtype and compute_dtype are all unchanged. the pairs are "
             f"not. uids are positional, so a deleted, inserted or reordered row silently "
             f"re-points every later pair at its neighbour's anchor. rebuild the cache."
         )
@@ -137,7 +139,8 @@ def build_reference_cache(
     length_norm : LengthNorm = "sum",
     batch_size : int = 16,
     device : Device = "cpu",
-    progress_every : int = 0
+    progress_every : int = 0,
+    autocast_dtype : Optional[torch.dtype] = None
 ):
     was_train = model.training
     try:
@@ -147,9 +150,9 @@ def build_reference_cache(
         for start in range(0, len(pairs), batch_size):
             b = collator(pairs[start : start + batch_size]).to(device)
             uids.append(b.uids.cpu())
-            
+
             with torch.inference_mode():
-                logps = sequence_logprobs(model, b.input_ids, b.attention_mask, b.completion_mask, length_norm)
+                logps = sequence_logprobs(model, b.input_ids, b.attention_mask, b.completion_mask, length_norm, autocast_dtype = autocast_dtype)
             
             chosen_logps, rejected_logps = logps[: b.B], logps[b.B :]
             chosen.append(chosen_logps.float().cpu())
@@ -184,7 +187,8 @@ def make_reference(
     collator : Optional[DPOCollator] = None,
     pairs : Optional[Sequence[PairView]] = None,
     device : Device = "cpu",
-    train : bool = True
+    train : bool = True,
+    autocast_dtype : Optional[torch.dtype] = None
 ):
     ref_cache_path = cfg.reference.precomputed_logp_path if train else cfg.reference.precomputed_val_logp_path
     fp = cfg.ref_fingerprint()
@@ -197,17 +201,17 @@ def make_reference(
     ref_ckpt = cfg.reference.reference_ckpt
     if ref_ckpt:
         from rlhf.core.policy.lm import load_policy
-        ref_model, _ = load_policy(model_ckpt = ref_ckpt, device = device, dtype = cfg.execution.dtype)
+        ref_model, _ = load_policy(model_ckpt = ref_ckpt, device = device, weights_dtype = cfg.execution.weights_dtype)
     else:
         import copy
         ref_model = copy.deepcopy(policy_model)
 
     if not ref_cache_path:
-        return LiveReference(ref_model, cfg.loss.length_norm, source = ref_ckpt or "<clone of policy at init>")
+        return LiveReference(ref_model, cfg.loss.length_norm, source = ref_ckpt or "<clone of policy at init>", autocast_dtype = autocast_dtype)
     else:
         if collator is None or pairs is None:
             raise ConfigError(f"reference cache {ref_cache_path} does not exist and no collator/pairs were given to build it")
-        blob = build_reference_cache(ref_model, collator, pairs, ref_cache_path, fp, cfg.loss.length_norm, device = device)
+        blob = build_reference_cache(ref_model, collator, pairs, ref_cache_path, fp, cfg.loss.length_norm, device = device, autocast_dtype = autocast_dtype)
         return CachedReference(ref_cache_path, fp, blob["data_digest"], device)
 
 
@@ -217,9 +221,10 @@ def assert_step_zero(
     batch : DPOBatch,
     length_norm : LengthNorm = "sum",
     tol : float = 0.0,
+    autocast_dtype : Optional[torch.dtype] = None
 ) -> tuple(float, float):
     with torch.no_grad():
-        policy_logps = sequence_logprobs(policy_model, batch.input_ids, batch.attention_mask, batch.completion_mask, length_norm)
+        policy_logps = sequence_logprobs(policy_model, batch.input_ids, batch.attention_mask, batch.completion_mask, length_norm, autocast_dtype = autocast_dtype)
     pc, pr = policy_logps[: batch.B], policy_logps[batch.B :]
     rc, rr = reference(batch)
 
@@ -233,7 +238,7 @@ def assert_step_zero(
             f"step-0 identity violated: max |chosen_log_probs - rejected_log_probs| = {worst_chosen:.3e}, expected <= {tol}.\n"
             f"    pi_ref is supposed to be a frozen clone of pi_theta, so every "
             f"log-ratio should be exactly 0.\n"
-            f"    check: length_norm on both sides, device, dtype, and whether "
+            f"    check: length_norm on both sides, device, weights_dtype, compute_dtype, and whether "
             f"the cache was built with this exact collator.")
     
     if worst_rejected > tol:
@@ -241,7 +246,7 @@ def assert_step_zero(
             f"step-0 identity violated: max |chosen_log_probs - rejected_log_probs| = {worst_rejected:.3e}, expected <= {tol}.\n"
             f"    pi_ref is supposed to be a frozen clone of pi_theta, so every "
             f"log-ratio should be exactly 0.\n"
-            f"    check: length_norm on both sides, device, dtype, and whether "
+            f"    check: length_norm on both sides, device, weights_dtype, compute_dtype, and whether "
             f"the cache was built with this exact collator.")
     return (worst_chosen, worst_rejected)
 

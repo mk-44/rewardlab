@@ -97,7 +97,7 @@ def from_dict(cls, d : Optional[dict], path : str = ""):
     for key, value in d.items():
         full = f"{path}.{key}" if path else key
         if key not in known:
-            hint = difflib.get_close_matches(key, known, n=1)
+            hint = difflib.get_close_matches(key, known, n=1) or [k for k in sorted(known) if key in k or k in key]
             suggest = f" — did you mean {hint[0]!r}?" if hint else ""
             raise ConfigError(f"unknown config key {full!r}{suggest} (known keys: {sorted(known)})")
         target = hints[known[key].name]
@@ -122,7 +122,8 @@ class DataConfig:
 @dataclass
 class ExecSection:
     device : str = "cpu"
-    dtype : str = "float32"
+    weights_dtype : str = "float32"
+    compute_dtype : str = "float32"
     seed : int = 0
     deterministic : bool = False
 
@@ -150,7 +151,7 @@ def apply_overrides(cfg, overrides: Sequence[str]):
         leaf = parts[-1]
         names = {f.name for f in fields(obj)}
         if leaf not in names:
-            hint = difflib.get_close_matches(leaf, names, n=1)
+            hint = difflib.get_close_matches(leaf, names, n=1) or [k for k in sorted(names) if leaf in k or k in leaf]
             suggest = f" — did you mean {hint[0]!r}?" if hint else ""
             raise ConfigError(f"override {dotted!r}: unknown key{suggest}")
         target = get_type_hints(type(obj))[leaf]

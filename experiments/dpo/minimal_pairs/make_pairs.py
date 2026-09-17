@@ -115,7 +115,7 @@ class BaseScorer:
     def __init__(self, model_name : str, template : str, append_eos : bool, device : str, batch_size : int):
         from transformers import AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(model_name)
-        self.model, _ = load_policy(model_name = model_name, device = device, dtype = "float32")
+        self.model, _ = load_policy(model_name = model_name, device = device, weights_dtype = "float32")
         self.model.eval()
         self.head, self.tail = template.split("{response}")
         self.append_eos = append_eos
