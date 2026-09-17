@@ -1,0 +1,71 @@
+run_name: beta_0.1
+out_dir: experiments/dpo/qwen3_if_tulu
+
+data:
+  train_path: data/preference_data/tulu3_if_personas/train.jsonl
+  val_path: data/preference_data/tulu3_if_personas/val.jsonl
+  format: pairwise
+  json_key: null
+  slice_keys: [constraint_family, n_constraints]
+  max_drop_rate: 0.05
+  prompt_field: prompt
+
+policy:
+  model_name: Qwen/Qwen3-1.7B
+  model_ckpt: null
+  tokenizer: ""
+  max_length: 1536
+  template: "<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{response}"
+  append_eos: true
+  gradient_checkpointing: true
+
+reference:
+  reference_ckpt: null
+  precomputed_logp_path: experiments/dpo/qwen3_if_tulu/cache/ref_train.pt
+  precomputed_val_logp_path: experiments/dpo/qwen3_if_tulu/cache/ref_val.pt
+
+loss:
+  beta: 0.1
+  length_norm: sum
+  sft_wt: 0.0
+
+train:
+  epochs: 1
+  batch_size: 1
+  accm_steps: 16
+  eval_batch_size: 2
+  lr: 0.0000005
+  weight_decay: 0.0
+  sched: cosine
+  warmup_steps: 60
+  clip_norm: 1.0
+  log_every: 10
+  eval_every: 250
+  early_stop_patience: 0
+  min_delta: 0.0
+  keep_last: 1
+  disable_dropout: true
+  resume_state: latest
+
+inference:
+  num_samples_per_prompt: 1
+  temperature: 0.0
+  top_p: 0.95
+  max_new_tokens: 512
+  eval_prompts: 64
+
+reward:
+  reward_functions: []
+  reward_wts: []
+  normalize_reward_func_wts: false
+
+execution:
+  device: cuda
+  weights_dtype: float32
+  compute_dtype: bfloat16
+  seed: 0
+  deterministic: false
+
+hub:
+  repo_id: null
+  private: true

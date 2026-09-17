@@ -211,7 +211,7 @@ def make_reference(
     else:
         if collator is None or pairs is None:
             raise ConfigError(f"reference cache {ref_cache_path} does not exist and no collator/pairs were given to build it")
-        blob = build_reference_cache(ref_model, collator, pairs, ref_cache_path, fp, cfg.loss.length_norm, device = device, autocast_dtype = autocast_dtype)
+        blob = build_reference_cache(ref_model, collator, pairs, ref_cache_path, fp, cfg.loss.length_norm, batch_size = cfg.train.eval_batch_size, device = device, autocast_dtype = autocast_dtype)
         return CachedReference(ref_cache_path, fp, blob["data_digest"], device)
 
 
