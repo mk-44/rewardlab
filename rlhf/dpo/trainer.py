@@ -371,7 +371,13 @@ class DPOTrainer:
                     with torch.no_grad():
                         rc, rr = self.train_reference(batch)
                     
-                    loss, loss_metrics = dpo_loss(pc, pr, rc, rr, self.cfg.loss.beta, self.cfg.loss.sft_wt, reduction = "mean")
+                    chosen_lengths = batch.completion_mask[: batch.B, 1 :].sum(dim = -1)
+                    loss, loss_metrics = dpo_loss(
+                        pc, pr, rc, rr, self.cfg.loss.beta, self.cfg.loss.sft_wt, 
+                        reduction = "mean", 
+                        chosen_lengths = chosen_lengths, 
+                        length_norm = self.cfg.loss.length_norm
+                    )
                     loss = loss * (batch.B / n_grp)
                     (self.scaler.scale(loss) if self.scaler is not None else loss).backward()
 

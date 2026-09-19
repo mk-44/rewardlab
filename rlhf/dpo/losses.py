@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 import torch
 from rlhf.core.contracts import ConfigError
 from rlhf.core.losses import bt_loss
@@ -39,7 +39,9 @@ def dpo_loss(
     ref_rejected_logps : torch.Tensor,
     beta : float = 0.1,
     sft_wt : float = 0.0,
-    reduction : Literal["mean", "sum", "none"] = "mean"
+    reduction : Literal["mean", "sum", "none"] = "mean",
+    chosen_lengths : Optional[torch.Tensor] = None,
+    length_norm : Literal["mean", "sum"] = "sum"
 ) -> tuple:
 
     if beta <= 0.0:
@@ -47,6 +49,11 @@ def dpo_loss(
     
     if sft_wt < 0.0:
         raise ConfigError(f"sft_wt must be >= 0 but instead is {sft_wt}")
+
+    if length_norm not in ("mean", "sum"):
+        raise ConfigError(f"length_norm must be mean or sum but instead is {length_norm}")
+
+        
     
     shapes = [t.shape for t in (policy_chosen_logps, policy_rejected_logps, ref_chosen_logps, ref_rejected_logps)]
     if any(len(s) != 1 for s in shapes) or len(set(shapes)) != 1:
@@ -69,7 +76,17 @@ def dpo_loss(
 
     sft = torch.zeros((), device = pc.device)
     if sft_wt > 0:
-        sft = - sft_wt * pc.mean()
+        if length_norm == "mean":
+            per_token = pc
+        else:
+            if chosen_lengths is None or chosen_lengths.shape != pc.shape:
+                got = None if chosen_lengths is None else tuple(chosen_lengths.shape)
+                raise ConfigError(f"sft_wt > 0 with length_norm sum needs chosen_lengths of shape {tuple(pc.shape)} but got {got}")
+            if bool((chosen_lengths <= 0).any()):
+                raise ConfigError("chosen_lengths must be positive for every pair")
+
+            per_token = pc / chosen_lengths.to(pc.dtype)
+        sft = - sft_wt * per_token.mean()
         loss = loss + sft
     
     dpo_metrics = DPOLossMetrics(
