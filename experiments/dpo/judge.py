@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -76,7 +77,8 @@ def split_constraints(text : str, sep : str) -> List[str]:
 
 def fill(template : str, prompt : str, constraints : Sequence[str], response : str) -> str:
     listed = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(constraints))
-    return template.replace("{prompt}", prompt).replace("{constraints}", listed).replace("{response}", response)
+    out = template.replace("{n_constraints}", str(len(constraints)))
+    return out.replace("{prompt}", prompt).replace("{constraints}", listed).replace("{response}", response)
 
 
 def param_style(model : str, style : str) -> str:
@@ -121,15 +123,37 @@ def parse_reply(raw : str, constraints : Sequence[str]) -> dict:
     for c, it in zip(constraints, items):
         if not isinstance(it, dict) or not isinstance(it.get("pass"), bool):
             raise ValueError("a constraint entry has no boolean pass")
-        verdicts.append({"constraint" : c, "pass" : it["pass"], "reason" : str(it.get("reason", ""))})
+        v = {"constraint" : c, "pass" : it["pass"], "reason" : str(it.get("reason", ""))}
+        if isinstance(it.get("requirement"), str):
+            v["requirement"] = it["requirement"]
+        verdicts.append(v)
     flags = {k : v for k, v in data.items() if k != "constraints" and isinstance(v, bool)}
     return {"constraints" : verdicts, "flags" : flags}
 
 
-def call(post : Callable, url : str, headers : dict, payload : dict, timeout : float, retries : int, dropped : List[str]):
+class Pacer:
+    def __init__(self, min_interval : float):
+        self.min_interval = min_interval
+        self.lock = threading.Lock()
+        self.next_at = 0.0
+
+    def wait(self) -> None:
+        if self.min_interval <= 0:
+            return
+        with self.lock:
+            now = time.monotonic()
+            start = max(now, self.next_at)
+            self.next_at = start + self.min_interval
+        delay = start - now
+        if delay > 0:
+            time.sleep(delay)
+
+
+def call(post : Callable, url : str, headers : dict, payload : dict, timeout : float, retries : int, dropped : List[str], pace : Callable = lambda : None):
     attempt = 0
     while True:
         status, body, err = None, None, None
+        pace()
         try:
             r = post(url, headers = headers, json = payload, timeout = timeout)
             status = r.status_code
@@ -175,6 +199,8 @@ class JudgeReport:
     input_tokens : int = 0
     output_tokens : int = 0
     seconds : float = 0.0
+    aborted : bool = False
+    consecutive_http_failures : int = 0
 
 
 def load_existing(out : Path, settings : dict):
@@ -207,7 +233,7 @@ def judge_row(row : dict, idx : int, ctx : dict, dropped : List[str]) -> dict:
     text = fill(ctx["template"], str(row[a.prompt_field]), constraints, str(row[a.target]))
     payload = payload_for(a.model, text, ctx["style"], a.reasoning_effort, a.temperature, not a.no_json_mode, dropped)
     try:
-        raw, usage = call(ctx["post"], ctx["url"], ctx["headers"], payload, a.timeout, a.retries, dropped)
+        raw, usage = call(ctx["post"], ctx["url"], ctx["headers"], payload, a.timeout, a.retries, dropped, ctx["pace"])
     except RuntimeError as e:
         out["judge_error"] = str(e)
         return out
@@ -232,7 +258,9 @@ def tally(rep : JudgeReport, r : dict) -> None:
     rep.judged += 1
     if r["judge_error"] is not None:
         rep.errors += 1
+        rep.consecutive_http_failures = rep.consecutive_http_failures + 1 if r["judge_error"].startswith("http") else 0
         return
+    rep.consecutive_http_failures = 0
     rep.all_pass += int(r["judge_all_pass"])
     rep.n_pass_sum += r["judge_n_pass"]
     rep.n_constraints_sum += len(r["judge_constraints"])
@@ -248,6 +276,10 @@ def run(args, post : Optional[Callable] = None, environ = os.environ) -> JudgeRe
         raise SystemExit("workers must be >= 1")
     if args.retries < 0:
         raise SystemExit("retries must be >= 0")
+    if args.min_interval < 0:
+        raise SystemExit("min interval must be >= 0")
+    if args.max_consecutive_failures < 1:
+        raise SystemExit("max consecutive failures must be >= 1")
     template = Path(args.prompt_file).read_text(encoding = "utf-8")
     check_template(template)
     sha = hashlib.sha256(template.encode("utf-8")).hexdigest()
@@ -282,9 +314,17 @@ def run(args, post : Optional[Callable] = None, environ = os.environ) -> JudgeRe
         "url" : args.base_url.rstrip("/") + "/chat/completions",
         "headers" : {"Authorization" : f"Bearer {key}", "Content-Type" : "application/json"},
         "style" : param_style(args.model, args.param_style),
+        "pace" : Pacer(args.min_interval).wait,
     }
     print(f"{args.model}   {ctx['style']} params   target {args.target}   {len(todo)} of {len(rows)} rows to judge   "
-          f"workers {args.workers}   prompt sha {sha[:12]}", flush = True)
+          f"workers {args.workers}   min interval {args.min_interval}s   stop after {args.max_consecutive_failures} http failures   prompt sha {sha[:12]}", flush = True)
+
+    def tripped() -> bool:
+        if rep.consecutive_http_failures < args.max_consecutive_failures:
+            return False
+        rep.aborted = True
+        print(f"  stopping after {rep.consecutive_http_failures} consecutive http failures. the api is refusing calls. fix the cause and rerun to resume", flush = True)
+        return True
 
     t0 = time.perf_counter()
     dropped : List[str] = []
@@ -296,17 +336,20 @@ def run(args, post : Optional[Callable] = None, environ = os.environ) -> JudgeRe
 
     rest = todo[1 :]
     chunk = max(1, args.workers * 2)
-    with ThreadPoolExecutor(max_workers = args.workers) as pool:
-        for b in range(0, len(rest), chunk):
-            part = rest[b : b + chunk]
-            results = list(pool.map(lambda ir : judge_row(ir[1], ir[0], ctx, dropped), part))
-            append_jsonl(out, results)
-            for r in results:
-                tally(rep, r)
-            ok = rep.judged - rep.errors
-            dt = time.perf_counter() - t0
-            print(f"  {rep.skipped + rep.judged}/{len(rows)}   errors {rep.errors}   all pass {rep.all_pass / ok if ok else 0.0:.1%}   "
-                  f"{rep.input_tokens + rep.output_tokens} tokens   {dt / 60:.1f} min", flush = True)
+    if not tripped():
+        with ThreadPoolExecutor(max_workers = args.workers) as pool:
+            for b in range(0, len(rest), chunk):
+                part = rest[b : b + chunk]
+                results = list(pool.map(lambda ir : judge_row(ir[1], ir[0], ctx, dropped), part))
+                append_jsonl(out, results)
+                for r in results:
+                    tally(rep, r)
+                ok = rep.judged - rep.errors
+                dt = time.perf_counter() - t0
+                print(f"  {rep.skipped + rep.judged}/{len(rows)}   errors {rep.errors}   all pass {rep.all_pass / ok if ok else 0.0:.1%}   "
+                      f"{rep.input_tokens + rep.output_tokens} tokens   {dt / 60:.1f} min", flush = True)
+                if tripped():
+                    break
     rep.seconds = time.perf_counter() - t0
     return rep
 
@@ -324,6 +367,7 @@ def render(rep : JudgeReport, width : int = 76) -> str:
         f"  constraints     : {rep.n_pass_sum} of {rep.n_constraints_sum} passed   {rep.n_pass_sum / rep.n_constraints_sum if rep.n_constraints_sum else 0.0:.1%}",
         f"  flags           : {flags}",
         f"  tokens          : {rep.input_tokens} in   {rep.output_tokens} out   {rep.seconds:.0f}s",
+        f"  stopped early   : after {rep.consecutive_http_failures} consecutive http failures. rerun to resume" if rep.aborted else "  completed       : yes",
         bar,
     ])
 
@@ -342,6 +386,8 @@ def main(argv = None) -> int:
     ap.add_argument("--workers", type = int, default = 8)
     ap.add_argument("--timeout", type = float, default = 120.0)
     ap.add_argument("--retries", type = int, default = 5)
+    ap.add_argument("--min-interval", dest = "min_interval", type = float, default = 0.0, help = "seconds between request starts across all workers. 0 means no pacing")
+    ap.add_argument("--max-consecutive-failures", dest = "max_consecutive_failures", type = int, default = 8, help = "stop the run after this many rows in a row fail at the http level")
     ap.add_argument("--param-style", dest = "param_style", choices = ("auto", "reasoning", "temperature", "none"), default = "auto")
     ap.add_argument("--reasoning-effort", dest = "reasoning_effort", default = "low")
     ap.add_argument("--temperature", type = float, default = 0.0)
@@ -352,8 +398,9 @@ def main(argv = None) -> int:
     args = ap.parse_args(argv)
     if not (args.prompt_file and args.rows and args.out and args.model):
         raise SystemExit("prompt file and rows and out and model are required")
-    print(render(run(args)))
-    return 0
+    rep = run(args)
+    print(render(rep))
+    return 1 if rep.aborted else 0
 
 
 if __name__ == "__main__":
